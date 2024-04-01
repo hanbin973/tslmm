@@ -1,4 +1,4 @@
-# ts_blup
+# tsblup
 Best Linear Unbiased Prediction via Tree Sequence
 
 1. run `python run.py` to produce inputs for `INLA`.

@@ -130,7 +130,7 @@ def split_upwards_numba(ts):
 def _split_upwards_numba(
     tree_pos, num_nodes, edges_left, edges_right, edges_child, edges_parent, out_edges
 ):
-    nodes_edge = np.full((num_nodes), tskit.NULL)
+    nodes_edge = np.full((num_nodes), -1)
 
     while True:
         tree_pos.next()
@@ -153,7 +153,7 @@ def _split_upwards_numba(
                 edges_parent,
                 edges_child,
             )
-            nodes_edge[c] = tskit.NULL
+            nodes_edge[c] = -1
 
         if left == right:
             break
@@ -191,7 +191,7 @@ def _split_node_up2(
     Move up from node u, splitting any edges above it.
     """
     edge_id = nodes_edge[u]
-    while edge_id != tskit.NULL:
+    while edge_id != -1:
         el = edges_left[edge_id]
         er = position
         if el < er:

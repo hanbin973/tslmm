@@ -17,7 +17,9 @@ class GeneticValueSimulator:
     def sim_genetic_value(self, **kwargs):
         self.sim_mutations(**kwargs)
         trait_dict = {
+            "position": self.mts.sites_position[self.mts.mutations_site],
             "site_id": self.mts.mutations_site,
+            "edge_id": [m.edge for m in self.mts.mutations()],
             "effect_size": self.beta[self.mts.sites_position[self.mts.mutations_site].astype(int)],
             "trait_id": np.zeros(self.mts.num_mutations, dtype=np.int32),
             "causal_allele": [m.derived_state for m in self.mts.mutations()]

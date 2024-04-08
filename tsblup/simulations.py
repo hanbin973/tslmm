@@ -24,8 +24,8 @@ class GeneticValueSimulator:
             "trait_id": np.zeros(self.mts.num_mutations, dtype=np.int32),
             "causal_allele": [m.derived_state for m in self.mts.mutations()]
         }
-        trait_df = pd.DataFrame(trait_dict)
-        self.genetic_df = tstrait.genetic_value(self.mts, trait_df)
+        self.trait_df = pd.DataFrame(trait_dict)
+        self.genetic_df = tstrait.genetic_value(self.mts, self.trait_df)
         
     def edge_effects(self):
         print("Not yet implemented")

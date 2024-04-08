@@ -19,7 +19,7 @@ def edge_child_matrix(ts):
             shape=(ts.num_edges, ts.num_nodes)
     )
 
-def parent_edge_marix(ts):
+def parent_edge_matrix(ts):
     """
     Returns the (sparse) matrix A for which A[u,e] = 1 if edge e is the child of node u.
     """

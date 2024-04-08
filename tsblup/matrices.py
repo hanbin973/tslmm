@@ -5,6 +5,23 @@ import numba
 
 import tskit
 
+# Simulation validation component
+def mutation_edge_matrix(ts):
+    """
+    Returns the (sparse) matrix A for which A[m,e] = 1 if mutation m is on edge e.
+    """
+    assert ts.num_mutations > 0, "Simulate mutation first"
+    return sparse.csr_matrix(
+        (
+            np.ones(ts.num_mutations),
+            (
+                np.arange(ts.num_mutations),
+                [m.edge for m in ts.mutations()]
+            )
+        ),
+        shape=(ts.num_mutations, ts.num_edges)
+    )
+
 # Genetic relatedness matrix components
 def edge_child_matrix(ts):
     """

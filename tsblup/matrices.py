@@ -1,6 +1,8 @@
 import numpy as np
 import scipy.sparse as sparse
 
+import numba
+
 import tskit
 
 # Genetic relatedness matrix components
@@ -42,13 +44,32 @@ def node_adjacency(ts):
     B = parent_edge_matrix(ts)
     return B.dot(A)
 
+@numba.njit
+def _edge_adjacency_prune(edges_left, edges_right, num_edges, data, indices, indptr):
+    for e in range(num_edges):
+        for f_idx in range(indptr[e], indptr[e+1]):
+            if (edges_left[e] >= edges_right[indices[f_idx]]) or (edges_left[indices[f_idx]] >= edges_right[e]):
+                data[f_idx] = 0
+
 def edge_adjacency(ts):
     """
     Returns the (sparse) matrix A for which A[e,f] = 1 if the child of edge e is the parent of edge f.
     """
     A = edge_child_matrix(ts)
     B = parent_edge_matrix(ts)
-    return A.dot(B)
+
+    C = A.dot(B)
+    _edge_adjacency_prune(
+        ts.edges_left, 
+        ts.edges_right,
+        ts.num_edges,
+        C.data,
+        C.indices,
+        C.indptr
+    )
+    C.eliminate_zeros()
+
+    return C
 
 
 # Random-effect design components

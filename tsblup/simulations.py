@@ -14,13 +14,21 @@ class GeneticValueSimulator:
     def sim_mutations(self, **kwargs):
         self.mts = msprime.sim_mutations(self.ts, **kwargs)
         
-    def sim_genetic_value(self, **kwargs):
+    def sim_genetic_value(self, ignore_parent=False, **kwargs):
         self.sim_mutations(**kwargs)
+
+        effect_size = self.beta[self.mts.sites_position[self.mts.mutations_site].astype(np.int32)]
+        if ignore_parent:
+            mutations_parent = self.mts.mutations_parent 
+            has_parent = np.where(mutations_parent != -1)[0]
+            is_parent = np.unique(mutations_parent[has_parent])
+            effect_size[is_parent] = 0
+
         trait_dict = {
             "position": self.mts.sites_position[self.mts.mutations_site],
             "site_id": self.mts.mutations_site,
             "edge_id": [m.edge for m in self.mts.mutations()],
-            "effect_size": self.beta[self.mts.sites_position[self.mts.mutations_site].astype(np.int32)],
+            "effect_size": effect_size,
             "trait_id": np.zeros(self.mts.num_mutations, dtype=np.int32),
             "causal_allele": [m.derived_state for m in self.mts.mutations()]
         }

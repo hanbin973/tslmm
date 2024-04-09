@@ -47,7 +47,7 @@ Q = T.T @ T
 
 # export Z and Q 
 io.mmwrite(Z, 'Z.mtx')
-io.mmwrite(Q. 'Q.mtx')
+io.mmwrite(Q, 'Q.mtx')
 ```
 
 

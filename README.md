@@ -13,5 +13,39 @@ $\mathbf{u} \sim \mathcal{N}\left(\mathbf{0}, Q_{\mathbf{u}}^{-1}\right)$ where 
 
 **tsblup** constructs $Z$ and $Q$ using the tree sequence.
 Both are sparse matrices with $O(\text{number of edges})$ non-zero elements that can be stored conveniently.
+See the example below:
+```
+import tskit
+import msprime
+
+import numpy as np
+import pandas as pd
+import scipy.sparse as sparse
+
+import tsblup.operations as operations
+import tsblup.matrices as matrices
+
+# simulate tree sequence
+ts = msprime.sim_ancestry(
+    samples=1_000,
+    recombination_rate=1e-8,
+    sequence_length=100_000,
+    population_size=10_000,
+    random_seed=100
+)
+
+# break edges to have a unique subtree
+break_ts = operations.split_upwards(ts)
+
+# calculate Z (random effects design matrix) from tree sequence
+Z = matrices.edge_individual_matrix(break_ts).T
+
+# calculate Q (precision matrix) from tree sequence
+A = matrices.edge_adjacency(break_ts).T
+T = sparse.identity(break_ts.num_edges) - A
+Q = T.T @ T
+```
+
+
 
 

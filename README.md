@@ -12,6 +12,6 @@ $\mathbf{u} \sim \mathcal{N}\left(\mathbf{0}, Q_{\mathbf{u}}^{-1}\right)$ where 
 - $\boldsymbol{\varepsilon}$ is the non-genetic error terms.
 
 `tstrait` constructs $Z$ and $Q$ using tree sequence object as inputs.
-Both are sparse matrices with $O(#\text{edges})$ non-zero elements that can be stored conveniently.
+Both are sparse matrices with $O(\text{number of edges})$ non-zero elements that can be stored conveniently.
 
 

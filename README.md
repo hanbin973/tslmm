@@ -20,7 +20,7 @@ import msprime
 
 import numpy as np
 import pandas as pd
-import scipy.sparse as sparse
+import scipy.io as io
 
 import tsblup.operations as operations
 import tsblup.matrices as matrices
@@ -44,6 +44,10 @@ Z = matrices.edge_individual_matrix(break_ts).T
 A = matrices.edge_adjacency(break_ts).T
 T = sparse.identity(break_ts.num_edges) - A
 Q = T.T @ T
+
+# export Z and Q 
+io.mmwrite(Z, 'Z.mtx')
+io.mmwrite(Q. 'Q.mtx')
 ```
 
 

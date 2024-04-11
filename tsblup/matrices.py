@@ -123,7 +123,7 @@ def _node_transmission_matrix(edges_parent, edges_child, edges_left, edges_right
     edgeptr = np.cumsum(parent_num_edges)
 
     # edge area
-    edges_area = (edges_left - edges_right) * (nodes_time[edges_parent] - nodes_time[edges_child])
+    edges_area = (edges_right - edges_left) * (nodes_time[edges_parent] - nodes_time[edges_child])
     
     # construct (sparse) node transmission matrix A
     # eps that weights variances

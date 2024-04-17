@@ -112,3 +112,57 @@ def edge_individual_matrix(ts):
     A = edge_child_matrix(ts)
     B = node_individual_matrix(ts)
     return A.dot(B)
+
+# Node approximation
+@numba.njit
+def _node_transmission_matrix(edges_parent, edges_child, edges_left, edges_right, nodes_time, num_nodes):
+    # sparse matrix-styled index pointer to edges
+    parent_num_edges = np.zeros(num_nodes+1, dtype=np.int32)
+    for parent in edges_parent:
+        parent_num_edges[parent+1] += 1
+    edgeptr = np.cumsum(parent_num_edges)
+
+    # edge area
+    edges_area = (edges_right - edges_left) * (nodes_time[edges_parent] - nodes_time[edges_child])
+    
+    # construct (sparse) node transmission matrix A
+    # eps that weights variances
+    values = [np.float64(x) for x in range(0)]
+    rows = [np.int32(x) for x in range(0)]
+    cols = [np.int32(x) for x in range(0)]
+    eps = np.zeros(num_nodes)
+    for parent in range(num_nodes):
+        e_begin, e_end = edgeptr[parent], edgeptr[parent+1]
+        if e_end > e_begin:
+            parent_left, parent_right = np.zeros(e_end-e_begin), np.zeros(e_end-e_begin)
+            for i, e in enumerate(range(e_begin, e_end)):
+                parent_left[i] = edges_left[e]
+                parent_right[i] = edges_right[e]
+            parent_span = parent_right.max() - parent_left.min()
+            for e in range(e_begin, e_end):
+                values.append((edges_right[e] - edges_left[e])/parent_span) # divided by total value
+                rows.append(edges_child[e])
+                cols.append(parent)
+                eps[edges_child[e]] += edges_area[e]
+
+    return values, rows, cols, eps
+
+def node_transmission_matrix(ts):
+    values, rows, cols, eps = _node_transmission_matrix(
+        ts.edges_parent,
+        ts.edges_child,
+        ts.edges_left,
+        ts.edges_right,
+        ts.nodes_time,
+        ts.num_nodes
+    )
+    return sparse.csr_matrix(
+        (
+            values,
+            (
+                rows,
+                cols
+            )
+        ),
+        shape=(ts.num_nodes, ts.num_nodes)
+    ), eps

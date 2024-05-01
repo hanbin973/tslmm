@@ -137,3 +137,22 @@ np.testing.assert_allclose(d_resid_d_sigma_check, d_resid_d_sigma)
 np.testing.assert_allclose(d_resid_d_tau_check, d_resid_d_tau)
 np.testing.assert_allclose(d_logdet_d_sigma_check, d_logdet_d_sigma)
 np.testing.assert_allclose(d_logdet_d_tau_check, d_logdet_d_tau)
+
+# optimization
+def loss(sigma, tau):
+    resid = np.sum((P.T @ y) / np.sqrt(D * tau + sigma))
+    logdet = np.sum(np.log(D * tau + sigma))
+    return (logdet + resid) / 2
+
+def grad(sigma, tau):
+    eigs = D * tau + sigma
+    d_tau = np.sum(D / eigs - D * (P.T @ y / eigs) ** 2) / 2
+    d_sigma = np.sum(1 / eigs - (P.T @ y / eigs) ** 2) / 2
+    return np.array([d_sigma, d_tau])
+
+d_loss_d_tau_check = nd.Derivative(lambda tau: loss(sigma, tau), n=1, step=1e-4)(tau)
+d_loss_d_sigma_check = nd.Derivative(lambda sigma: loss(sigma, tau), n=1, step=1e-4)(sigma)
+np.testing.assert_allclose(d_loss_d_sigma_check, grad(sigma, tau)[0], rtol=1e-3)
+np.testing.assert_allclose(d_loss_d_tau_check, grad(sigma, tau)[1], rtol=1e-3)
+
+

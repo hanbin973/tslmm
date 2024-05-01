@@ -105,6 +105,11 @@ inv = P @ np.diag(1.0 / (D * tau + sigma)) @ P.T # precision matrix (not needed)
 resid = (P.T @ y) / np.sqrt(D * tau + sigma) # quadratic in loglik
 logdet = np.sum(np.log(D * tau + sigma)) # logdet in loglik
 
+d_logdet_d_tau = np.sum(D / (D * tau + sigma)) # gradient wrt tau
+d_logdet_d_sigma = np.sum(1 / (D * tau + sigma)) # gradient wrt sigma
+d_resid_d_tau = np.sum(-D * (P.T @ y) ** 2 / (D * tau + sigma) ** 2) # gradient wrt tau
+d_resid_d_sigma = np.sum(-(P.T @ y) ** 2 / (D * tau + sigma) ** 2) # gradient wrt tau
+
 # check
 S = Zt.T @ sparse.linalg.spsolve(Tt @ Tt.T, np.asarray(Zt.todense()))
 inv_check = np.linalg.inv(S * tau + sigma * np.eye(S.shape[0]))
@@ -116,3 +121,19 @@ np.testing.assert_allclose(np.sum(resid ** 2), np.sum(resid_check ** 2))
 _, logdet_check = np.linalg.slogdet(inv_check)
 np.testing.assert_allclose(logdet, -logdet_check)
 
+# check derivatives
+import numdifftools as nd
+
+d_logdet_d_sigma_check = \
+    nd.Derivative(lambda sigma: np.linalg.slogdet(S * tau + sigma * np.eye(S.shape[0]))[1], n=1, step=1e-4)(sigma)
+d_logdet_d_tau_check = \
+    nd.Derivative(lambda tau: np.linalg.slogdet(S * tau + sigma * np.eye(S.shape[0]))[1], n=1, step=1e-4)(tau)
+d_resid_d_sigma_check = \
+    nd.Derivative(lambda sigma: y.T @ np.linalg.solve(S * tau + sigma * np.eye(S.shape[0]), y), n=1, step=1e-4)(sigma)
+d_resid_d_tau_check = \
+    nd.Derivative(lambda tau: y.T @ np.linalg.solve(S * tau + sigma * np.eye(S.shape[0]), y), n=1, step=1e-4)(tau)
+
+np.testing.assert_allclose(d_resid_d_sigma_check, d_resid_d_sigma)
+np.testing.assert_allclose(d_resid_d_tau_check, d_resid_d_tau)
+np.testing.assert_allclose(d_logdet_d_sigma_check, d_logdet_d_sigma)
+np.testing.assert_allclose(d_logdet_d_tau_check, d_logdet_d_tau)

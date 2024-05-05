@@ -43,6 +43,9 @@ class RowEdgeDesign():
         return out
 
 def randomized_svd(design, n_components=2, n_iter=5, n_oversamples=5, seed=None):
+    """
+    design is the RowEdgeDesign class object
+    """
     np.random.seed(seed)
     
     random_matrix = np.random.normal(size=(n_components+n_oversamples, design.num_edges)).T

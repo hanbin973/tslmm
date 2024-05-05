@@ -3,7 +3,7 @@ import scipy.sparse as sparse
 
 from .linalg import *
 
-class RowEdgeDesign():
+class RowEdgeDesign:
     def __init__(self, Z, T, w):
         """
         Z is the design matrix in CSR

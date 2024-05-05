@@ -3,7 +3,7 @@ import scipy.sparse as sparse
 
 from .linalg import *
 
-class IndividualEdgeDesign():
+class RowEdgeDesign():
     def __init__(self, Z, T, w):
         """
         Z is the design matrix in CSR
@@ -12,14 +12,18 @@ class IndividualEdgeDesign():
         """
         self.Z = Z
         self.T = sparse.diags(1/w) @ T
+        self.T.sort_indices()
         self.Tp = self.T.indptr
         self.Ti = self.T.indices
         self.Tx = self.T.data
+        
+        self.num_rows = Z.shape[0]
+        self.num_edges = Z.shape[1]
     
-    def multiply_left(self, left):
+    def dot_left(self, left):
         if left.flags['C_CONTIGUOUS']:
             forward_2dsolve_c(self.Tp, self.Ti, self.Tx, left)
-        elif left.flags['F_CONTIGHOUS']:
+        elif left.flags['F_CONTIGUOUS']:
             forward_2dsolve_f(self.Tp, self.Ti, self.Tx, left)
         else:
             raise ValueError('left is not contiguous')        
@@ -27,7 +31,7 @@ class IndividualEdgeDesign():
         out -= out.mean(axis=0)[None,:]
         return out
 
-    def multiply_right(self, right):
+    def dot_right(self, right):
         right -= right.mean(axis=0)[None,:]
         out = self.Z.T @ right
         if out.flags['C_CONTIGUOUS']:
@@ -37,3 +41,19 @@ class IndividualEdgeDesign():
         else:
             raise ValueError('out is not contiguous')
         return out
+
+def randomized_svd(design, n_components=2, n_iter=5, n_oversamples=5, seed=None):
+    np.random.seed(seed)
+    
+    random_matrix = np.random.normal(size=(n_components+n_oversamples, design.num_edges)).T
+    sample_matrix = design.dot_left(random_matrix)
+    range_old, _ = qr(sample_matrix)
+    
+    for i in range(n_iter):
+        range_new, _ = qr(design.dot_right(range_old))
+        range_old, _ = qr(design.dot_left(range_new))
+        
+    U, S, V = np.linalg.svd(design.dot_right(range_old).T, full_matrices=False)
+    return (range_old @ U)[:,:n_components], S[:n_components], V[:n_components,:]
+    
+

@@ -42,13 +42,17 @@ class RowEdgeDesign:
             raise ValueError('out is not contiguous')
         return out
 
-def randomized_svd(design, n_components=2, n_iter=5, n_oversamples=5, seed=None):
+def randomized_svd(design, n_components=2, n_iter=5, n_oversamples=5, random_matrix=None, seed=None):
     """
     design is the RowEdgeDesign class object
     """
-    np.random.seed(seed)
     
-    random_matrix = np.random.normal(size=(n_components+n_oversamples, design.num_edges)).T
+    if random_matrix is None:
+        if seed is None:
+            seed = 0
+        np.random.seed(seed)
+        random_matrix = np.random.normal(size=(n_components+n_oversamples, design.num_edges)).T
+
     sample_matrix = design.dot_left(random_matrix)
     range_old, _ = qr(sample_matrix)
     

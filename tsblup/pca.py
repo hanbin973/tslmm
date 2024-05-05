@@ -30,10 +30,10 @@ class IndividualEdgeDesign():
     def multiply_right(self, right):
         right -= right.mean(axis=0)[None,:]
         out = self.Z.T @ right
-        if right.flags['C_CONTIGUOUS']:
+        if out.flags['C_CONTIGUOUS']:
             back_2dsolve_c(self.Tp, self.Ti, self.Tx, out)
-        elif right.flags['F_CONTIGHOUS']:
+        elif out.flags['F_CONTIGHOUS']:
             back_2dsolve_f(self.Tp, self.Ti, self.Tx, out)
         else:
-            raise ValueError('left is not contiguous')
+            raise ValueError('out is not contiguous')
         return out

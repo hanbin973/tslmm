@@ -51,7 +51,7 @@ io.mmwrite(Q, 'Q.mtx')
 ```
 
 `tsblup` can perform principal component analysis (PCA) on the tree sequence.
-One can flexibly select branches by setting the weights of branches.
+One can flexibly select branches by setting their weight.
 A typical choice is to weight branches according to their area.
 
 ```

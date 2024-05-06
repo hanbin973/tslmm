@@ -50,6 +50,18 @@ io.mmwrite(Z, 'Z.mtx')
 io.mmwrite(Q, 'Q.mtx')
 ```
 
+`tsblup` can perform principal component analysis (PCA) on the tree sequence.
+One can flexibly select branches by setting the weights of branches.
+A typical choice is to weight branches according to their area.
 
+```
+# edge removal & truncation
+edges_weight = np.sqrt(edges_area)
 
+# Design & RSVD
+design = RowEdgeDesign(Z, T, edges_weight)
+U, S, V = randomized_svd(design)
+```
 
+Note that zeros in the branch weights are not allowed. 
+Instead, put a small number (e.g. `1e-10`).

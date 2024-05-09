@@ -3,6 +3,43 @@ import numba
 from numba import prange
 from numba.types import Tuple
 
+@numba.njit("f8[:](i4[:], i4[:], i4, f8[:])")
+def csc_v(Ap, Ai, nrow, x):
+    """
+    `A` is CSC matrix with only ones
+    `x` is a vector
+    compute y=Ax
+    """
+    y = np.zeros(nrow)
+    for j in range(0, Ap.size - 1):
+        il, iu = Ap[j:j+2]
+        for i in Ai[il:iu]:
+            y[i] += x[j]
+    return y
+
+@numba.njit("void(i4[:], i4[:], f8[:])")
+def back_solve(Lp, Li, y):
+    """
+    `L` is lower-triangular Cholesky factor in CSC format: solve `L x = y`.
+    `y` is updated in-place.
+    """
+    x = y
+    for j in range(0, x.size):
+        for p in range(Lp[j] + 1, Lp[j + 1]):
+            x[Li[p]] += x[j]
+
+@numba.njit("void(i4[:], i4[:], f8[:])")
+def forward_solve(Lp, Li, y):
+    """
+    `L` is lower-triangular Cholesky factor in CSC format: solve `L' x = y`.
+    `y` is updated in-place.
+    """
+    x = y 
+    for j in range(x.size - 1, -1, -1):
+        for p in range(Lp[j] + 1, Lp[j + 1]):
+            x[j] += x[Li[p]]
+
+# TODO remove all Lx from the functions and pca class
 @numba.njit("void(i4[:], i4[:], f8[:], f8[:,:])")
 def back_2dsolve_c(Lp, Li, Lx, Y):
     """

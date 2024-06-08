@@ -161,7 +161,7 @@ class UnitMatrixCSR():
 class GeomMatrix():
     """
     Lower-triangular CSC matrix. Diagonals are all 1. Off-diagonals are all -1.
-    I + A + A^2 + A^3 + ...
+    `I + A + A^2 + A^3 + ...`
     """
     def __init__(self, p, i, ndim):
         self.p = p
@@ -180,7 +180,7 @@ class GeomMatrix():
         """
         forward_solve(self.p, self.i, y)
 
-@numba.njit(f8[::1](f8[::1], UnitMatrixCSR.class_type.instance_type, GeomMatrix.class_type.instance_type, f8[::1]), fastmath=True)
+@numba.njit(f8[::1](f8[::1], UnitMatrixCSR.class_type.instance_type, GeomMatrix.class_type.instance_type, f8[::1]))
 def grm_v(v, design, geom, edges_weight):
     w = design.tdot(v)
     geom.back_solve(w)
@@ -220,5 +220,41 @@ class KernelMatrix():
                 self.geom_list[i],
                 self.edges_weight_list[i]
             )
-            
         return w + self.sigma_ep * v
+
+@numba.njit(f8[::1](f8[::1], UnitMatrixCSR.class_type.instance_type, GeomMatrix.class_type.instance_type, f8[::1]))
+def covyu_v(v, design, geom, edges_weight):
+    w = design.tdot(v)
+    geom.back_solve(w)
+    w *= edges_weight
+    geom.forward_solve(w)
+    return w
+
+@jitclass(spec_list2)
+class CovOutCumMatrix():
+    def __init__(
+        self,
+        design_list,
+        geom_list,
+        edges_weight_list
+    ):
+        assert len(design_list) == len(geom_list)
+        assert len(geom_list) == len(edges_weight_list)
+        self.design_list = design_list
+        self.geom_list = geom_list
+        self.edges_weight_list = edges_weight_list
+
+    def dot(self, v):
+        w = np.empty(sum([x.size for x in self.edges_weight_list]))
+        cnt = 0
+        for i in range(len(self.design_list)):
+            num_edges = self.edges_weight_list[i].size
+            il, iu = cnt, cnt+num_edges
+            w[il:iu] = covyu_v(
+                v,
+                self.design_list[i],
+                self.geom_list[i],
+                self.edges_weight_list[i]
+            )
+            cnt += iu
+        return w

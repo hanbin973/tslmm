@@ -161,6 +161,7 @@ class UnitMatrixCSR():
 class GeomMatrix():
     """
     Lower-triangular CSC matrix. Diagonals are all 1. Off-diagonals are all -1.
+    I + A + A^2 + A^3 + ...
     """
     def __init__(self, p, i, ndim):
         self.p = p

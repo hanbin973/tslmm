@@ -242,9 +242,9 @@ class Design:
         sample_matrix = self.dot_left(random_matrix, id_subset)
         range_old, _ = np.linalg.qr(sample_matrix)
         for i in range(n_iter):
-            range_new, _ = np.linalg.qr(design.dot_right(range_old, id_subset))
-            range_old, _ = np.linalg.qr(design.dot_left(range_new, id_subset))
-        U, S, V = np.linalg.svd(design.dot_right(range_old, id_subset).T, full_matrices=False)
+            range_new, _ = np.linalg.qr(self.dot_right(range_old, id_subset))
+            range_old, _ = np.linalg.qr(self.dot_left(range_new, id_subset))
+        U, S, V = np.linalg.svd(self.dot_right(range_old, id_subset).T, full_matrices=False)
         return (range_old @ U)[:,:n_components], S[:n_components], V[:n_components,:]    
                 
 # https://arxiv.org/pdf/2110.02820
@@ -280,7 +280,7 @@ class RandNystromPreconditioner:
         v2 = v1 / (lam + self.eig_val)
         out = (lam + self.eig_last) * self.eig_vec @ v2 + v - self.eig_vec @ v1
         out /= lam
-        return out.ravel()
+        return out
 
 
 # === CVs ===
@@ -312,7 +312,7 @@ class KernelMatrix():
         w = np.zeros(v.size)
         for i in range(len(self.design_list)):
             w += grm_v(
-                v[:,None],
+                v,
                 self.design_list[i],
                 self.id_subset,
                 self.geom_list[i],
@@ -398,7 +398,9 @@ class BLUPCrossValidation:
             self.preconditioners.append(
                 RandNystromPreconditioner(
                     self.design,
-                    id_subset=np.delete(id_inds, id_subset)
+                    id_subset=np.delete(id_inds, id_subset),
+                    n_components=n_components,
+                    n_iter=n_iter
                 )
             )
 

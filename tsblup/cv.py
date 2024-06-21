@@ -1,132 +1,24 @@
 import numpy as np
-from scipy import sparse
+
+import scipy
+import scipy.sparse as sparse
 from scipy.sparse.linalg import LinearOperator
+
 import numba
-from numba import prange
-from numba import f8, i4
 from numba import types, typed
-from numba.types import Tuple
-from numba.experimental import jitclass
-from .linalg_unit import *
+from numba.types import f8, i4
 
-@numba.njit("f8[::1](i4[::1], i4[::1], i4[:], i4, f8[::1])")
-def csc_v(Ap, Ai, cols, nrow, x):
-    """
-    Compute `y=Ax`
-    `A` : np.ndarray 
-        CSC matrix with only ones
-    `x` : np.ndarray 
-        vector to multiply
-    `cols` :
-        columns of `A` to be used
-    """
-    y = np.zeros(nrow)
-    for jj, j in enumerate(cols):
-        jl, ju = Ap[j:j+2]
-        for i in Ai[jl:ju]:
-            y[i] += x[jj]
-    return y
+from functools import partial
 
-@numba.njit("f8[::1](i4[::1], i4[::1], i4[:], i4, f8[::1])")
-def csr_v(Ap, Ai, rows, nrow, x):
-    """
-    `A` is CSR matrix with only ones
-    `x` is a vector
-    compute y=Ax
-    """
-    y = np.zeros(rows.size)
-    for ii, i in enumerate(rows):
-        il, iu = Ap[i:i+2]
-        for j in Ai[il:iu]:
-            y[ii] += x[j]
-    return y
+from .preconditioner import *
 
-spec_list = [
-    ('p', i4[::1]),
-    ('i', i4[::1]), 
-    ('nrow', i4), 
-    ('ncol', i4),
-    ('ndim', i4)
-]
-
-@jitclass(spec_list)
-class UnitMatrixCSC():
-    """
-    CSC matrix. All elements are 1.
-    """
-    def __init__(self, p, i, nrow, ncol):
-        self.p = p
-        self.i = i
-        self.nrow = nrow
-        self.ncol = ncol
-    
-    def dot(self, v, cols):
-        assert cols.size == v.size
-        return csc_v(self.p, self.i, cols, self.nrow, v)
-
-    def tdot(self, v, rows):
-        assert self.nrow == v.size
-        return csr_v(self.p, self.i, rows, row.size, v)
-
-@jitclass(spec_list)
-class UnitMatrixCSR():
-    """
-    CSR matrix. All elements are 1.
-    """
-    def __init__(self, p, i, nrow, ncol):
-        self.p = p
-        self.i = i
-        self.nrow = nrow
-        self.ncol = ncol
-    
-    def dot(self, v, rows):
-        assert self.ncol == v.size
-        return csr_v(self.p, self.i, rows, rows.size, v)
-
-    def tdot(self, v, cols):
-        assert cols.size == v.size
-        return csc_v(self.p, self.i, cols, self.ncol, v)
-
-@jitclass(spec_list)
-class GeomMatrix():
-    """
-    Lower-triangular CSC matrix. Diagonals are all 1. Off-diagonals are all -1.
-    `I + A + A^2 + A^3 + ...`
-    """
-    def __init__(self, p, i, ndim):
-        self.p = p
-        self.i = i
-        self.ndim = ndim
-        
-    def back_solve(self, y):
-        """
-        L x =y 
-        """
-        back_solve(self.p, self.i, y)
-
-    def forward_solve(self, y):
-        """
-        L' x = y
-        """
-        forward_solve(self.p, self.i, y)
-
-@numba.njit(f8[::1](f8[::1], UnitMatrixCSR.class_type.instance_type, i4[:], GeomMatrix.class_type.instance_type, f8[::1]))
 def grm_v(v, design, id_subset, geom, edges_weight):
-    w = design.tdot(v, id_subset)
+    w = design.tdot(v[:,None], id_subset)
     geom.back_solve(w)
-    w *= edges_weight
+    w *= edges_weight[:,None]
     geom.forward_solve(w)
-    return design.dot(w, id_subset)
+    return design.dot(w, id_subset).ravel()
 
-spec_list2 = [
-    ('design_list', types.ListType(UnitMatrixCSR.class_type.instance_type)),
-    ('geom_list', types.ListType(GeomMatrix.class_type.instance_type)),
-    ('edges_weight_list', types.ListType(f8[::1])),
-    ('sigma_ep', f8),
-    ('id_subset', i4[:])
-]
-
-@jitclass(spec_list2)
 class KernelMatrix():
     def __init__(
         self,
@@ -156,15 +48,13 @@ class KernelMatrix():
             )
         return w + self.sigma_ep * v
 
-@numba.njit(f8[::1](f8[::1], UnitMatrixCSR.class_type.instance_type, i4[:], GeomMatrix.class_type.instance_type, f8[::1]))
 def covyu_v(v, design, id_subset, geom, edges_weight):
-    w = design.tdot(v, id_subset)
+    w = design.tdot(v[:,None], id_subset)
     geom.back_solve(w)
-    w *= edges_weight
+    w *= edges_weight[:,None]
     geom.forward_solve(w)
-    return w
+    return w.ravel()
 
-@jitclass(spec_list2)
 class CovOutCumMatrix():
     def __init__(
         self,
@@ -196,11 +86,13 @@ class CovOutCumMatrix():
             cnt += iu
         return w
 
+from scipy.sparse.linalg import LinearOperator
+
 def chunk_array(arr, n_chunk):
     chunk_size = int(arr.size / n_chunk)
     return [arr[i:i+chunk_size] for i in range(0, arr.shape[0], chunk_size)]     
 
-class BLUP:
+class BLUPCrossValidation:
     def __init__(
         self,
         design_list,
@@ -214,47 +106,103 @@ class BLUP:
         self.y = y
 
         self.n_inds = y.size
-        self.mode = None
-        
-    def compute_base_subset(self, id_subset, sigma_g, sigma_ep):
-        if self.mode is None:
-            self.mode = 'base'
-        self.edges_weight_list = typed.List([sigma_g * v for v in self.edges_area_list])
-            
+        self.n_cv = None
+
+        self.design = Design(
+            self.design_list,
+            self.geom_list,
+            self.edges_area_list,
+            self.n_inds
+        )
+
+    def set_cv(self, cv=5, n_components=500, n_iter=3):
+        # chunk array
+        id_inds = np.arange(self.n_inds, dtype=np.int32)
+        self.id_chunks = chunk_array(id_inds, cv)
+
+        # construct preconditioner
+        self.preconditioners = []
+        for id_subset in self.id_chunks:
+            self.preconditioners.append(
+                RandNystromPreconditioner(
+                    self.design,
+                    id_subset=np.delete(id_inds, id_subset),
+                    n_components=n_components,
+                    n_iter=n_iter
+                )
+            )
+
+        # set cv
+        self.n_cv = cv
+
+    def blup_subset(self, id_subset, lam, preconditioner=None):           
         kernel = KernelMatrix(
                 self.design_list,
                 self.geom_list,
-                self.edges_weight_list,
-                sigma_ep,
+                self.edges_area_list,
+                lam,
                 id_subset
             )
-        kernel_op = LinearOperator((id_subset.size, id_subset.size), matvec=kernel.dot)
+        kernel_op = LinearOperator(
+            (id_subset.size, id_subset.size), 
+            matvec=kernel.dot
+        )
         covyu = CovOutCumMatrix(
                 self.design_list,
                 self.geom_list,
-                self.edges_weight_list,
+                self.edges_area_list,
                 id_subset
             )
-        return covyu.dot(sparse.linalg.cg(kernel_op, self.y[id_subset])[0])
 
-    def compute_base(self, sigma_g, sigma_ep):
-        return self.compute_base_subset(np.arange(self.n_inds, dtype=np.int32), sigma_g, sigma_e)
-    
-    def cv_error_base(self, sigma_g, sigma_ep, cv=5):
-        if self.mode is None:
-            self.mode = 'base'
-        self.edges_weight_list = typed.List([sigma_g * v for v in self.edges_area_list])
-            
-        id_inds = np.arange(self.n_inds, dtype=np.int32)
-        id_chunks = chunk_array(id_inds, cv)
-        err_nonnormalized = 0
-        for id_chunk in id_chunks:
-            id_train, id_test = np.delete(id_inds, id_chunk), id_chunk
-            u_blup = self.compute_base_subset(id_train, sigma_g, sigma_ep)
-            y_blup = np.zeros(id_test.size)
-            for design in self.design_list:
-                y_blup += design.dot(u_blup, id_test)
-            err_nonnormalized += np.sum((self.y[id_test] - y_blup)**2)
-        return err_nonnormalized / self.n_inds
+        if preconditioner is None:
+            v1 = sparse.linalg.cg(kernel_op, self.y[id_subset])[0]
+            v2 = sparse.linalg.cg(kernel_op, v1)[0]
+        else:
+            preconditioner_dot = partial(
+                preconditioner.dot,
+                lam=lam
+            )
+            preconditioner_op = LinearOperator(
+                (id_subset.size, id_subset.size), 
+                matvec=preconditioner_dot
+            )
+            v1 = sparse.linalg.cg(
+                kernel_op, 
+                self.y[id_subset],
+                M=preconditioner_op
+            )[0]
+            v2 = sparse.linalg.cg(
+                kernel_op, 
+                v1,
+                M=preconditioner_op
+            )[0]
         
-       
+        return covyu.dot(v1), covyu.dot(v2) 
+
+    def blup(self, lam, id_preconditioner=None):
+        return self.compute_base_subset(
+            np.arange(self.n_inds, dtype=np.int32), 
+            lam,
+            preconditioner=None
+        )
+    
+    def cv_error(self, lam):
+        assert self.n_cv is not None
+        err_nonnormalized, grad = 0, 0
+        id_inds = np.arange(self.n_inds, dtype=np.int32)
+        for i, id_chunk in enumerate(self.id_chunks):
+            id_train, id_test = np.delete(id_inds, id_chunk), id_chunk
+            u_blup, gu_blup = self.blup_subset(
+                id_train, 
+                lam, 
+                self.preconditioners[i]
+            )            
+            y_blup, gy_blup = np.zeros(id_test.size), np.zeros(id_test.size)
+            for design in self.design_list:
+                y_blup += design.dot(u_blup, id_test).ravel()
+                gy_blup += design.dot(gu_blup, id_test).ravel()
+            residual = self.y[id_test] - y_blup
+            err_nonnormalized += np.sum(residual**2)
+            grad += np.dot(residual, gy_blup)
+        
+        return err_nonnormalized / self.n_inds, 2 * grad / self.n_inds

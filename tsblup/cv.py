@@ -199,10 +199,114 @@ class BLUPCrossValidation:
             )            
             y_blup, gy_blup = np.zeros(id_test.size), np.zeros(id_test.size)
             for design in self.design_list:
-                y_blup += design.dot(u_blup, id_test).ravel()
-                gy_blup += design.dot(gu_blup, id_test).ravel()
+                y_blup += design.dot(u_blup[:,None], id_test).ravel()
+                gy_blup += design.dot(gu_blup[:,None], id_test).ravel()
             residual = self.y[id_test] - y_blup
             err_nonnormalized += np.sum(residual**2)
             grad += np.dot(residual, gy_blup)
+        
+        return err_nonnormalized / self.n_inds, 2 * grad / self.n_inds
+        
+class BLUPRandPred:
+    def __init__(
+        self,
+        design_list,
+        geom_list,
+        edges_area_list,
+        y
+    ):
+        self.design_list = design_list
+        self.geom_list = geom_list
+        self.edges_area_list = edges_area_list
+        self.y = y
+
+        self.n_inds = y.size
+
+        self.design = Design(
+            self.design_list,
+            self.geom_list,
+            self.edges_area_list,
+            self.n_inds
+        )
+
+    def set_random(self, id_train, n_components=500, n_iter=3):
+        # define train/test sets
+        id_inds = np.arange(self.n_inds, dtype=np.int32)
+        self.id_train, self.id_test = id_train, np.delete(id_inds, id_train)
+        
+        # construct preconditioner
+        self.preconditioner = RandNystromPreconditioner(
+            self.design,
+            id_subset=id_train,
+            n_components=n_components,
+            n_iter=n_iter
+        )
+        
+    def blup_subset(self, id_subset, lam, preconditioner=None):           
+        kernel = KernelMatrix(
+                self.design_list,
+                self.geom_list,
+                self.edges_area_list,
+                lam,
+                id_subset
+            )
+        kernel_op = LinearOperator(
+            (id_subset.size, id_subset.size), 
+            matvec=kernel.dot
+        )
+        covyu = CovOutCumMatrix(
+                self.design_list,
+                self.geom_list,
+                self.edges_area_list,
+                id_subset
+            )
+
+        if preconditioner is None:
+            v1 = sparse.linalg.cg(kernel_op, self.y[id_subset])[0]
+            v2 = sparse.linalg.cg(kernel_op, v1)[0]
+        else:
+            preconditioner_dot = partial(
+                preconditioner.dot,
+                lam=lam
+            )
+            preconditioner_op = LinearOperator(
+                (id_subset.size, id_subset.size), 
+                matvec=preconditioner_dot
+            )
+            v1 = sparse.linalg.cg(
+                kernel_op, 
+                self.y[id_subset],
+                M=preconditioner_op
+            )[0]
+            v2 = sparse.linalg.cg(
+                kernel_op, 
+                v1,
+                M=preconditioner_op
+            )[0]
+        
+        return covyu.dot(v1), covyu.dot(v2) 
+
+    def blup(self, lam, id_preconditioner=None):
+        return self.compute_base_subset(
+            np.arange(self.n_inds, dtype=np.int32), 
+            lam,
+            preconditioner=None
+        )
+    
+    def cv_error(self, loglam):
+        u_blup, gu_blup = self.blup_subset(
+            self.id_train, 
+            np.exp(loglam), 
+            self.preconditioner
+        )            
+        y_blup, gy_blup = np.zeros(self.id_test.size), np.zeros(self.id_test.size)
+        for design in self.design_list:
+            y_blup += design.dot(u_blup[:,None], self.id_test).ravel()
+            gy_blup += design.dot(gu_blup[:,None], self.id_test).ravel()
+        residual = self.y[self.id_test] - y_blup
+        err_nonnormalized = np.sum(residual**2)
+        grad = np.dot(residual, gy_blup) * np.exp(loglam)
+        
+        return err_nonnormalized / self.n_inds, 2 * grad / self.n_inds
         
         return err_nonnormalized / self.n_inds, 2 * grad / self.n_inds

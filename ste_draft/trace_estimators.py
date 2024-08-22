@@ -107,6 +107,7 @@ def xnystrace(A: LinearOperator, m: int) -> [float, float]:
 def xdiag(A: LinearOperator, m: int) -> np.ndarray:
     """
     XDiag from https://arxiv.org/pdf/2301.07825
+    Assumes A is self-adjoint but this is not checked
     """
     N = A.shape[0]
     m = int(np.floor(m / 2))
@@ -118,7 +119,9 @@ def xdiag(A: LinearOperator, m: int) -> np.ndarray:
     Om = -3 + 2 * np.random.randint(1, 3, size=(N, m))  # Rademacher vectors
     Y = A @ Om
     Q, R = np.linalg.qr(Y)
-    Z = A.T @ Q
+    # we're assuming A is self-adjoint
+    #Z = A.T @ Q
+    Z = A @ Q
     T = Z.T @ Om
     S = cnormc(np.linalg.inv(R).T)
     dQZ = diag_prod(Q.T, Z.T)

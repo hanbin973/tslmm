@@ -7,7 +7,11 @@ import numpy as np
 import scipy.sparse as sparse
 import ray
 
-from trace_estimators import xtrace, hutchinson
+from trace_estimators import xtrace, xdiag
+
+#def conjugate_gradient(A : sparse.linalg.LinearOperator, b :
+
+
 
 
 def exact_loglikelihood(sigma, tau, y, covariance):
@@ -59,7 +63,6 @@ def stochastic_gradient(sigma, tau, y, covariance, preconditioner, samples=1, cg
     """
 
     global _count_iter
-
     _count_iter = 0
     def _count_iter_incr(xk):
         global _count_iter
@@ -76,29 +79,9 @@ def stochastic_gradient(sigma, tau, y, covariance, preconditioner, samples=1, cg
     en = time.time()
     assert info == 0, "CG failed"
     print(f"DEBUG {_count_iter} CG iterations, {en - st:.2f} sec", flush=True)
-    #solver = DistributedConjugateGradient.remote(A, M, maxiter=cg_maxiter)
+    #solver = DistributedConjugateGradient.remote(A, M, maxiter=cg_maxiter)  # this has huge overhead
     solver = DistributedConjugateGradient(A, M, maxiter=cg_maxiter)
 
-    # OLD STUFF
-    #test_vectors = rng.normal(size=(dim, samples))
-    #test_vectors /= np.sqrt(np.sum(test_vectors ** 2, 0))[None, :]  # unit circle
-    #sketch = np.column_stack(ray.get([solver.solve.remote(x) for x in test_vectors.T])) # precision
-    #sigma_grad = np.sum(sketch * test_vectors) * dim / samples - np.sum(solution ** 2)
-    #if variance_reduction:
-    #    sigma_control = np.sum(test_vectors * preconditioner.grad_sigma(sigma, tau, test_vectors)) / samples
-    #    sigma_grad += preconditioner.grad_sigma(sigma, tau) - dim * sigma_control
-
-    #test_vectors = rng.normal(size=(dim, samples))
-    #test_vectors /= np.sqrt(np.sum(test_vectors ** 2, 0))[None, :]  # unit circle
-    #sketch = covariance(0, 1, test_vectors)  # d(covariance)/d(tau)
-    #sketch = np.column_stack(ray.get([solver.solve.remote(x) for x in sketch.T])) # precision @ d(covariance)/d(tau)
-    #rotation = covariance(0, 1, solution).flatten()
-    #tau_grad = np.sum(sketch * test_vectors) * dim / samples - np.sum(solution * rotation)
-    #if variance_reduction:
-    #    tau_control = np.sum(test_vectors * preconditioner.grad_tau(sigma, tau, test_vectors)) / samples
-    #    tau_grad += preconditioner.grad_tau(sigma, tau) - dim * tau_control
-
-    # NEW STUFF
     def _sigma_grad_trace(test_vectors):
         if test_vectors.ndim == 1: test_vectors = test_vectors.reshape(-1, 1)
         #sketch = np.column_stack(ray.get([solver.solve.remote(x) for x in test_vectors.T]))
@@ -125,3 +108,53 @@ def stochastic_gradient(sigma, tau, y, covariance, preconditioner, samples=1, cg
     tau_grad = tau_grad_trace - np.sum(solution * covariance(0, 1, solution).flatten())
 
     return np.array([-sigma_grad / 2, -tau_grad / 2])
+
+
+def genetic_values(sigma, tau, y, covariance, preconditioner, diag_samples=0):
+    """
+    y = r + e, r ~ N(0, t Z(LL')^{-1}Z'), e ~ N(0, sI)
+
+    Q = Z(LL')^{-1}Z'
+    M = Q^{-1} / t + I / s
+
+    E[r|y] = M^{-1} y / s = (Q^{-1} / t + I / s)^{-1} y / s
+           = (I - s (Q t + I s)^{-1}) y
+
+    V[r|y] = M^{-1}
+           = I s + s ** 2 (t Z(LL')^{-1}Z' + I s)^{-1}
+    """
+
+    global _count_iter
+    _count_iter = 0
+    def _count_iter_incr(xk):
+        global _count_iter
+        _count_iter += 1
+
+    dim = covariance.dim
+    A = sparse.linalg.LinearOperator((dim, dim), lambda y: covariance(sigma, tau, y))
+    M = sparse.linalg.LinearOperator((dim, dim), lambda y: preconditioner(sigma, tau, y))
+    st = time.time()
+    solution, info = sparse.linalg.cg(A, y, callback=_count_iter_incr, M=M)
+    en = time.time()
+    assert info == 0, "CG failed"
+    print(f"DEBUG {_count_iter} CG iterations, {en - st:.2f} sec", flush=True)
+
+    # expected value
+    Ey = y - sigma * solution
+
+    # estimate variance with stochastic estimator
+    solver = DistributedConjugateGradient(A, M, maxiter=None)
+    def _covariance_diag(test_vectors):
+        if test_vectors.ndim == 1: test_vectors = test_vectors.reshape(-1, 1)
+        sketch = np.column_stack([solver.solve(x) for x in test_vectors.T])
+        return sketch
+
+    if diag_samples > 0:
+        covariance_diag = sparse.linalg.LinearOperator((dim, dim), lambda y: _covariance_diag(y))
+        covariance_diag = xdiag(covariance_diag, diag_samples)
+        Vy = sigma - sigma ** 2 * covariance_diag
+    else:
+        Vy = np.full(dim, np.nan)
+
+    return Ey, Vy
+

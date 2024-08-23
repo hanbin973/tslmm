@@ -2,7 +2,9 @@
 Tests for "linear_operators.py" and "likelihoods.py"
 """
 
+import time
 import msprime
+import numba
 import numpy as np
 import numdifftools as nd
 import scipy.sparse as sparse
@@ -43,6 +45,7 @@ def _verify_preconditioner(sigma, tau, preconditioner, seed):
 def _verify_covariance(sigma, tau, covariance, seed):
     rng = np.random.default_rng(seed)
     y = rng.normal(size=covariance.dim)
+    Y = rng.normal(size=(covariance.dim, 4))
     explicit_covariance = covariance.as_matrix(sigma, tau)
 
     # check matrix
@@ -53,13 +56,36 @@ def _verify_covariance(sigma, tau, covariance, seed):
     np.testing.assert_allclose(ck_matrix, covariance.as_matrix(sigma, tau))
 
     # check matvec
-    ck_product = explicit_covariance @ y.reshape(-1, 1)
+    ck_product = explicit_covariance @ y
     np.testing.assert_allclose(ck_product, covariance(sigma, tau, y))
 
-    num_reps = 1000
-    simulated = [covariance.simulate(sigma, tau, rng) for _ in range(num_reps)]
+    # check matvec with multiple rhs
+    ck_product = explicit_covariance @ Y
+    np.testing.assert_allclose(ck_product, covariance(sigma, tau, Y))
+
+    # check inverse matvec
+    ck_inverse = np.linalg.solve(explicit_covariance, y)
+    inverse, iter_unconditioned, converged = covariance.solve(sigma, tau, y, rtol=1e-8)
+    assert converged
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
+
+    # check inverse matvec with preconditioner
+    preconditioner = NystromPreconditioner(covariance, rank=10)
+    M = lambda x: preconditioner(sigma, tau, x)
+    inverse, iter_preconditioned, converged = covariance.solve(sigma, tau, y, preconditioner=M, rtol=1e-8)
+    assert converged
+    assert iter_preconditioned < iter_unconditioned
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
+
+    # check inverse matvec with multiple rhs
+    ck_inverse = np.linalg.solve(explicit_covariance, Y)
+    inverse, _, converged = covariance.solve(sigma, tau, Y, preconditioner=M, rtol=1e-8)
+    assert converged
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
 
     # check simulated observations
+    num_reps = 1000
+    simulated = [covariance.simulate(sigma, tau, rng) for _ in range(num_reps)]
     simulated_y = np.hstack([y.reshape(-1, 1) for _, _, y in simulated])
     std_dev_y = np.std(simulated_y, axis=1)
     ck_std_dev_y = np.sqrt(np.asarray(ck_matrix.diagonal()))
@@ -81,12 +107,13 @@ def _verify_gradients(sigma, tau, covariance, preconditioner, seed):
     tau_grad = nd.Derivative(lambda tau: exact_loglikelihood(sigma, tau, y, covariance), n=1, step=1e-4)
     ck_score = np.array([sigma_grad(sigma), tau_grad(tau)])
     np.testing.assert_allclose(ck_score, exact_gradient(sigma, tau, y, covariance))
-    print(ck_score, stochastic_gradient(sigma, tau, y, covariance, preconditioner, rng=rng, samples=100))
+    print(ck_score, stochastic_gradient(sigma, tau, y, covariance, preconditioner, rng=rng, num_samples=100))
 
 
 # -------------- #
 
 if __name__ == "__main__":
+    numba.set_num_threads(4)
     ts = msprime.sim_ancestry(
         samples=100,
         recombination_rate=1e-8,
@@ -97,6 +124,9 @@ if __name__ == "__main__":
     covariance = TraitCovariance(ts, mutation_rate=1e-10)
     preconditioner = NystromPreconditioner(covariance, rank=10, samples=20, seed=1)
     _verify_preconditioner(0.9, 0.25, preconditioner, 1024)
+    st = time.time()
     _verify_covariance(0.9, 0.25, covariance, 1024)
+    en = time.time()
+    print(f"benchmark {en - st:.2f}")
     _verify_gradients(0.9, 0.25, covariance, preconditioner, 1024)
 

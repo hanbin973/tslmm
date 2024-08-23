@@ -1,22 +1,23 @@
 from scipy.sparse.linalg import LinearOperator
+from numpy.random import Generator
+from typing import Callable
 import numpy as np
 
 # TODO use rng
 
 
-def hutchinson(A: LinearOperator, m: int) -> [float, float]:
+def hutchinson(A: Callable, N: int, m: int, rng: Generator = None) -> [float, float]:
     """
     Hutchinson from https://arxiv.org/pdf/2301.07825
     """
-    N = A.shape[0]
+    if rng is None: rng = np.random.default_rng()
     m = int(np.floor(m / 2))
-    assert m <= N
     cnormc = lambda M: M / np.linalg.norm(M, 2, axis=0)[np.newaxis, :]  # divide by column norm
     diag_prod = lambda A, B: np.sum(A * B, axis=0)  # diag(A' @ B)
 
     # trace estimate
-    Om = np.sqrt(N) * cnormc(np.random.randn(N, m))
-    Y = A @ Om 
+    Om = np.sqrt(N) * cnormc(rng.normal(size=(N, m)))
+    Y = A(Om)
     ests = diag_prod(Om, Y)
     t = np.mean(ests)
     err = np.std(ests, ddof=1) / np.sqrt(m)
@@ -24,19 +25,18 @@ def hutchinson(A: LinearOperator, m: int) -> [float, float]:
     return t, err
 
 
-def xtrace(A: LinearOperator, m: int) -> [float, float]:
+def xtrace(A: Callable, N: int, m: int, rng: Generator = None) -> [float, float]:
     """
     XTrace from https://arxiv.org/pdf/2301.07825
     """
-    N = A.shape[0]
+    if rng is None: rng = np.random.default_rng()
     m = int(np.floor(m / 2))
-    assert m <= N
     cnormc = lambda M: M / np.linalg.norm(M, 2, axis=0)[np.newaxis, :]  # divide by column norm
     diag_prod = lambda A, B: np.sum(A * B, axis=0)  # diag(A' @ B)
 
     # svd
-    Om = np.sqrt(N) * cnormc(np.random.randn(N, m))
-    Y = A @ Om 
+    Om = np.sqrt(N) * cnormc(rng.normal(size=(N, m)))
+    Y = A(Om)
     Q, R = np.linalg.qr(Y)
 
     # normalisation
@@ -46,7 +46,7 @@ def xtrace(A: LinearOperator, m: int) -> [float, float]:
         + np.abs(diag_prod(S, W) * np.linalg.norm(S, 2, axis=0)) ** 2)
 
     # trace estimate
-    Z = A @ Q
+    Z = A(Q)
     H = Q.T @ Z
     HW = H @ W
     T = Z.T @ Om
@@ -65,20 +65,19 @@ def xtrace(A: LinearOperator, m: int) -> [float, float]:
     return t, err
 
 
-def xnystrace(A: LinearOperator, m: int) -> [float, float]:
+def xnystrace(A: Callable, N: int, m: int, rng: Generator = None) -> [float, float]:
     """
     XNysTrace from https://arxiv.org/pdf/2301.07825
     NB: `A` must be positive definite, this is not checked
     """
-    N = A.shape[0]
-    assert m <= N
+    if rng is None: rng = np.random.default_rng()
     cnormc = lambda M: M / np.linalg.norm(M, 2, axis=0)[np.newaxis, :]  # divide by column norm
     diag_prod = lambda A, B: np.sum(A * B, axis=0)  # diag(A' @ B)
 
     # nystrom
     Om = np.sqrt(N) * cnormc(np.random.randn(N, m))
-    Y = A @ Om 
-    nu = 1 / np.sqrt(N) * np.finfo(float).eps * np.linalg.norm(Y)
+    Y = A(Om)
+    nu = np.finfo(float).eps / np.sqrt(N) * np.linalg.norm(Y)
     Y += nu * Om
     Q, R = np.linalg.qr(Y)
     H = Om.T @ Y
@@ -96,32 +95,29 @@ def xnystrace(A: LinearOperator, m: int) -> [float, float]:
     W = Q.T @ Om
     S = np.linalg.solve(C, B.T).T * (np.diag(np.linalg.inv(H)).T) ** (-1/2)
     dSW = diag_prod(S, W).T
-    ests = np.linalg.norm(B) ** 2 - np.linalg.norm(S, 2, axis=0) ** 2 + np.abs(dSW) ** 2 * scale \
-        - nu * N
+    ests = np.linalg.norm(B) ** 2 - np.linalg.norm(S, 2, axis=0) ** 2 + \
+        np.abs(dSW) ** 2 * scale - nu * N
     t = np.mean(ests)
     err = np.std(ests, ddof=1) / np.sqrt(m)
 
     return t, err
 
 
-def xdiag(A: LinearOperator, m: int) -> np.ndarray:
+def xdiag(A: Callable, N: int, m: int, rng: Generator = None) -> np.ndarray:
     """
     XDiag from https://arxiv.org/pdf/2301.07825
     Assumes A is self-adjoint but this is not checked
     """
-    N = A.shape[0]
+    if rng is None: rng = np.random.default_rng()
     m = int(np.floor(m / 2))
-    assert m <= N
-    cnormc = lambda M: M / np.linalg.norm(M, 2, axis=0)[None, :]  # divide by column norm
+    cnormc = lambda M: M / np.linalg.norm(M, 2, axis=0)[np.newaxis, :]  # divide by column norm
     diag_prod = lambda A, B: np.sum(A * B, axis=0)  # diag(A' @ B)
 
     # randomized SVD
     Om = -3 + 2 * np.random.randint(1, 3, size=(N, m))  # Rademacher vectors
-    Y = A @ Om
+    Y = A(Om)
     Q, R = np.linalg.qr(Y)
-    # we're assuming A is self-adjoint
-    #Z = A.T @ Q
-    Z = A @ Q
+    Z = A(Q)  # Z = A.T @ Q -- we're assuming A is self-adjoint
     T = Z.T @ Om
     S = cnormc(np.linalg.inv(R).T)
     dQZ = diag_prod(Q.T, Z.T)

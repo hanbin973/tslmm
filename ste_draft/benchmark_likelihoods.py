@@ -1,4 +1,3 @@
-import ray
 import time
 import numba
 import numpy as np
@@ -9,7 +8,7 @@ from likelihoods import exact_loglikelihood, exact_gradient, stochastic_gradient
 from linear_operators import TraitCovariance, NystromPreconditioner
 
 
-def compare_exact_vs_stochastic(sigma, tau, y, covariance, preconditioner, rng=None, samples=4):
+def compare_exact_vs_stochastic(sigma, tau, y, covariance, preconditioner, rng=None, num_samples=4):
     loglik = exact_loglikelihood(sigma, tau, y, covariance)
 
     st = time.time()
@@ -18,12 +17,12 @@ def compare_exact_vs_stochastic(sigma, tau, y, covariance, preconditioner, rng=N
     exact_timing = en - st
 
     st = time.time()
-    stochastic = stochastic_gradient(sigma, tau, y, covariance, preconditioner, samples=samples, rng=rng, variance_reduction=False)
+    stochastic = stochastic_gradient(sigma, tau, y, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=False)
     en = time.time()
     stochastic_timing = en - st
 
     st = time.time()
-    stochastic_vr = stochastic_gradient(sigma, tau, y, covariance, preconditioner, samples=samples, rng=rng, variance_reduction=True)
+    stochastic_vr = stochastic_gradient(sigma, tau, y, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=True)
     en = time.time()
     stochastic_vr_timing = en - st
 
@@ -34,11 +33,11 @@ def compare_exact_vs_stochastic(sigma, tau, y, covariance, preconditioner, rng=N
 
     return loglik, exact, stochastic, stochastic_vr
 
+
 if __name__ == "__main__":
     
     num_threads = 4
     numba.set_num_threads(num_threads)
-    ray.init(num_cpus=num_threads)
     
     ts = msprime.sim_ancestry(
         samples=1000,

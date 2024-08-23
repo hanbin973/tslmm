@@ -3,8 +3,6 @@ from numpy.random import Generator
 from typing import Callable
 import numpy as np
 
-# TODO use rng
-
 
 def hutchinson(A: Callable, N: int, m: int, rng: Generator = None) -> [float, float]:
     """

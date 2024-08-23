@@ -33,7 +33,6 @@ Riffing on: https://proceedings.mlr.press/v162/wenger22a/wenger22a.pdf
 import tskit
 import numba
 import numpy as np
-import ray
 import scipy.sparse as sparse
 import scipy
 import sys

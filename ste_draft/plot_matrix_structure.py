@@ -6,12 +6,12 @@ from linear_operators import TraitCovariance
 num_threads = 4
 numba.set_num_threads(num_threads)
 
-n_samples = 25
-n_pops = 10
-s_length = 1e6
+n_samples = 50
+n_pops = 20
+s_length = 1e5
 ne = 1e4
 
-island_model = msprime.Demography.island_model([ne] * n_pops, 1e-5)
+island_model = msprime.Demography.island_model([ne] * n_pops, 1e-5 / n_pops)
 for i in range(1, n_pops):
     island_model.add_mass_migration(time=2*ne, source=i, dest=0, proportion=1.0)
 

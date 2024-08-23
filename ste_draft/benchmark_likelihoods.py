@@ -39,14 +39,24 @@ if __name__ == "__main__":
     num_threads = 4
     numba.set_num_threads(num_threads)
     
+    n_samples = 50
+    n_pops = 20
+    s_length = 1e5
+    ne = 1e4
+    
+    island_model = msprime.Demography.island_model([ne] * n_pops, 1e-5 / n_pops)
+    for i in range(1, n_pops):
+        island_model.add_mass_migration(time=2*ne, source=i, dest=0, proportion=1.0)
+    
     ts = msprime.sim_ancestry(
-        samples=1000,
+        samples={f"pop_{i}": n_samples for i in range(n_pops)},
         recombination_rate=1e-8,
-        sequence_length=1e6,
-        population_size=1e4,
+        sequence_length=s_length,
+        demography=island_model,
         random_seed=1024,
     )
-    covariance = TraitCovariance(ts, mutation_rate=1e-8)
+
+    covariance = TraitCovariance(ts, mutation_rate=1e-10)
     preconditioner = NystromPreconditioner(covariance, rank=100, samples=200, seed=1)
 
     true_tau = 0.5

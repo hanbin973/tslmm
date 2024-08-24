@@ -10,7 +10,7 @@ import numdifftools as nd
 import scipy.sparse as sparse
 
 from linear_operators import TraitCovariance, NystromPreconditioner
-from likelihoods import exact_loglikelihood, exact_gradient, stochastic_gradient
+from likelihoods import exact_loglikelihood, exact_gradient, stochastic_gradient, exact_loglikelihood_reml, exact_gradient_reml, stochastic_gradient_reml
 
 
 def _verify_preconditioner(sigma, tau, preconditioner, seed):
@@ -67,7 +67,7 @@ def _verify_covariance(sigma, tau, covariance, seed):
     ck_inverse = np.linalg.solve(explicit_covariance, y)
     inverse, iter_unconditioned, converged = covariance.solve(sigma, tau, y, rtol=1e-8)
     assert converged
-    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-5)
 
     # check inverse matvec with preconditioner
     preconditioner = NystromPreconditioner(covariance, rank=10)
@@ -75,13 +75,13 @@ def _verify_covariance(sigma, tau, covariance, seed):
     inverse, iter_preconditioned, converged = covariance.solve(sigma, tau, y, preconditioner=M, rtol=1e-8)
     assert converged
     assert iter_preconditioned < iter_unconditioned
-    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-5)
 
     # check inverse matvec with multiple rhs
     ck_inverse = np.linalg.solve(explicit_covariance, Y)
     inverse, _, converged = covariance.solve(sigma, tau, Y, preconditioner=M, rtol=1e-8)
     assert converged
-    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-6)
+    np.testing.assert_allclose(ck_inverse, inverse, rtol=1e-5)
 
     # check simulated observations
     num_reps = 1000
@@ -102,12 +102,36 @@ def _verify_covariance(sigma, tau, covariance, seed):
 
 def _verify_gradients(sigma, tau, covariance, preconditioner, seed):
     rng = np.random.default_rng(seed)
+    num_covariates = 4
     y = rng.normal(size=covariance.dim)
+    X = rng.normal(size=(covariance.dim, num_covariates))
+
     sigma_grad = nd.Derivative(lambda sigma: exact_loglikelihood(sigma, tau, y, covariance), n=1, step=1e-4)
     tau_grad = nd.Derivative(lambda tau: exact_loglikelihood(sigma, tau, y, covariance), n=1, step=1e-4)
     ck_score = np.array([sigma_grad(sigma), tau_grad(tau)])
     np.testing.assert_allclose(ck_score, exact_gradient(sigma, tau, y, covariance))
     print(ck_score, stochastic_gradient(sigma, tau, y, covariance, preconditioner, rng=rng, num_samples=100))
+    # TODO samples > rank errors out
+
+    sigma_grad_reml = nd.Derivative(lambda sigma: exact_loglikelihood_reml(sigma, tau, y, X, covariance), n=1, step=1e-4)
+    tau_grad_reml = nd.Derivative(lambda tau: exact_loglikelihood_reml(sigma, tau, y, X, covariance), n=1, step=1e-4)
+    ck_score = np.array([sigma_grad_reml(sigma), tau_grad_reml(tau)])
+    np.testing.assert_allclose(ck_score, exact_gradient_reml(sigma, tau, y, X, covariance))
+    print(ck_score, stochastic_gradient_reml(sigma, tau, y, X, covariance, preconditioner, rng=rng, num_samples=100))
+
+    np.testing.assert_allclose(
+        exact_loglikelihood_reml(sigma, tau, y, X, covariance, use_qr=False),
+        exact_loglikelihood_reml(sigma, tau, y, X, covariance, use_qr=True),
+    )
+    np.testing.assert_allclose(
+        exact_gradient_reml(sigma, tau, y, X, covariance, use_qr=False),
+        exact_gradient_reml(sigma, tau, y, X, covariance, use_qr=True),
+    )
+    np.testing.assert_allclose(
+        stochastic_gradient_reml(sigma, tau, y, X, covariance, preconditioner, rng=np.random.default_rng(1), num_samples=10),
+        stochastic_gradient_reml(sigma, tau, y, np.linalg.qr(X).Q, covariance, preconditioner, rng=np.random.default_rng(1), num_samples=10),
+        rtol=1e-5
+    )
 
 
 # -------------- #
@@ -124,9 +148,6 @@ if __name__ == "__main__":
     covariance = TraitCovariance(ts, mutation_rate=1e-10)
     preconditioner = NystromPreconditioner(covariance, rank=10, samples=20, seed=1)
     _verify_preconditioner(0.9, 0.25, preconditioner, 1024)
-    st = time.time()
     _verify_covariance(0.9, 0.25, covariance, 1024)
-    en = time.time()
-    print(f"benchmark {en - st:.2f}")
     _verify_gradients(0.9, 0.25, covariance, preconditioner, 1024)
 

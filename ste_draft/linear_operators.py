@@ -137,7 +137,7 @@ class TraitCovariance:
         assert b.shape[0] == self.dim
         assert atol >= 0 and rtol >= 0
         if maxitt is None: maxitt = self.dim
-        if not b.any(): return b, 0, True  # b = 0
+        if not b.any(): return b, 0, True  # b == 0
         if is_vector: b = b.reshape(-1, 1)
         atol = max(atol, rtol * np.linalg.norm(b))
         M = preconditioner

@@ -104,45 +104,62 @@ class TraitCovariance:
         mutational_target = mutation_rate * (ts.edges_right - ts.edges_left) * \
             (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
         self.dim = ts.num_individuals
-        self.kernel_dim = ts.num_edges
+        self.factor_dim = ts.num_edges
         self.Z = matrices.edge_individual_matrix(ts).T
         self.L = scipy.sparse.identity(ts.num_edges) - matrices.edge_adjacency(ts).T
         self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(mutational_target))
         self.L.sort_indices()
 
-    def __call__(self, sigma, tau, y):
+    def _factor(self, y):
+        r"""
+        Matrix-vector product with lower factor, `Z' L^{-T} y`
+        Maps from ts.num_edges to ts.num_individuals
         """
-        Matrix-vector product
+        return self.Z @ self.forward_solve(self.L.indptr, self.L.indices, self.L.data, y)
+
+    def _factor_adjoint(self, y):
+        r"""
+        Matrix-vector product with upper factor, `L^{-1} Z y`
+        Maps from ts.num_individuals to ts.num_edges
+        """
+        return self.backward_solve(self.L.indptr, self.L.indices, self.L.data, self.Z.T @ y)
+
+    def __call__(self, sigma, tau, y):
+        r"""
+        Matrix-vector product, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2) y`
         """
         # TODO can we do this without forming num_edges x y.shape[1] vectors -- Peter thinks yes
         assert self.L.has_sorted_indices
         is_vector = y.ndim == 1
         if is_vector: y = y.reshape(-1, 1)
-        Zy = self.Z.T @ y
-        Zy = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
-        Zy = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
-        Zy = self.Z @ Zy * tau + y * sigma
-        if is_vector: Zy = Zy.squeeze()
-        return Zy
+        ## x = self._factor_adjoint_matvec(y)
+        #Zy = self.Z.T @ y
+        #Zy = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
+        ## x = self._factor_matvec(x) * tau + y * sigma
+        #Zy = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
+        #Zy = self.Z @ Zy * tau + y * sigma
+        #if is_vector: Zy = Zy.squeeze()
+        x = y * sigma + self._factor(self._factor_adjoint(y)) * tau
+        if is_vector: x = x.squeeze()
+        return x
 
+    def solve(self, sigma, tau, y, preconditioner=None, maxitt=None, atol=0., rtol=1e-5):
+        r"""
+        Matrix-vector product with inverse, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2)^{-1} y`
 
-    def solve(self, sigma, tau, b, preconditioner=None, maxitt=None, atol=0., rtol=1e-5):
-        """
-        Matrix-vector product with inverse covariance matrix.
-
-        Re-implementing CG here to parallelise with multiple rhs, adapted from
+        Re-implemented CG to parallelize with multiple rhs, adapted from:
         https://github.com/scipy/scipy/blob/v1.14.1/scipy/sparse/linalg/_isolve/iterative.py#L283-L388
         """
-        is_vector = b.ndim == 1
-        assert b.shape[0] == self.dim
+        is_vector = y.ndim == 1
+        assert y.shape[0] == self.dim
         assert atol >= 0 and rtol >= 0
         if maxitt is None: maxitt = self.dim
-        if not b.any(): return b, 0, True  # b == 0
-        if is_vector: b = b.reshape(-1, 1)
-        atol = max(atol, rtol * np.linalg.norm(b))
+        if not y.any(): return y, 0, True  # y == 0
+        if is_vector: y = y.reshape(-1, 1)
+        atol = max(atol, rtol * np.linalg.norm(y))
         M = preconditioner
-        x = np.zeros_like(b) if M is None else M(b)
-        r = b - self(sigma, tau, x)
+        x = np.zeros_like(y) if M is None else M(y)
+        r = y - self(sigma, tau, x)
         for itt in range(maxitt):
             if np.linalg.norm(r) < atol:  # frobenius norm
                 break
@@ -173,17 +190,24 @@ class TraitCovariance:
         Sigma = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, Sigma)
         Sigma = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, Sigma)
         Sigma = tau * Zd @ Sigma + sigma * np.eye(self.dim)
+        # Z = self.Z.toarray()
+        # Sigma = np.eye(self.dim) * sigma + self._factor(self._factor_adjoint(Z.T)) * tau
         return Sigma
 
-    def simulate(self, sigma, tau, rng):
+    def simulate(self, sigma, tau, rng, num_samples=1):
         """
-        Returns edge effects, genetics values, observed values
+        Return (edge effects, genetic values, observed values)
         """
-        u = rng.normal(size=(self.kernel_dim, 1))
-        r = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, u).flatten() * np.sqrt(tau)
-        x = self.Z @ r
-        e = rng.normal(size=self.dim) * np.sqrt(sigma)
-        return r, x, x + e
+        u = rng.normal(size=(self.factor_dim, num_samples)) * np.sqrt(tau)
+        g = self._factor(u)
+        e = rng.normal(size=(self.dim, num_samples)) * np.sqrt(sigma)
+        y = g + e
+        return u.squeeze(), g.squeeze(), y.squeeze(), 
+        #u = rng.normal(size=(self.factor_dim, 1))
+        #r = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, u).flatten() * np.sqrt(tau)
+        #x = self.Z @ r
+        #e = rng.normal(size=self.dim) * np.sqrt(sigma)
+        #return u, r, x, x + e
 
 
 class NystromPreconditioner:

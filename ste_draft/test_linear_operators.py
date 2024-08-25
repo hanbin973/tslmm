@@ -93,11 +93,13 @@ def _verify_covariance(sigma, tau, covariance, seed):
     np.testing.assert_allclose(ck_std_dev_y, std_dev_y, rtol=1e-1)
 
     # check simulated genetic values
-    simulated_x = np.hstack([x.reshape(-1, 1) for _, x, _ in simulated])
-    std_dev_x = np.std(simulated_x, axis=1)
-    ck_std_dev_x = np.sqrt(np.asarray(ck_genetic_matrix.diagonal()) * tau)
-    assert np.corrcoef(ck_std_dev_x, std_dev_x)[0, 1] > 0.95
-    np.testing.assert_allclose(ck_std_dev_x, std_dev_x, rtol=1e-1)
+    simulated_g = np.hstack([g.reshape(-1, 1) for _, g, _ in simulated])
+    std_dev_g = np.std(simulated_g, axis=1)
+    ck_std_dev_g = np.sqrt(np.asarray(ck_genetic_matrix.diagonal()) * tau)
+    assert np.corrcoef(ck_std_dev_g, std_dev_g)[0, 1] > 0.95
+    np.testing.assert_allclose(ck_std_dev_g, std_dev_g, rtol=1e-1)
+
+    # TODO check simulated edge effects
 
 
 def _verify_gradients(sigma, tau, covariance, preconditioner, seed):
@@ -111,7 +113,7 @@ def _verify_gradients(sigma, tau, covariance, preconditioner, seed):
     ck_score = np.array([sigma_grad(sigma), tau_grad(tau)])
     np.testing.assert_allclose(ck_score, exact_gradient(sigma, tau, y, covariance))
     print(ck_score, stochastic_gradient(sigma, tau, y, covariance, preconditioner, rng=rng, num_samples=100))
-    # TODO samples > rank errors out
+    # TODO samples > rank errors out of STE
 
     sigma_grad_reml = nd.Derivative(lambda sigma: exact_loglikelihood_reml(sigma, tau, y, X, covariance), n=1, step=1e-4)
     tau_grad_reml = nd.Derivative(lambda tau: exact_loglikelihood_reml(sigma, tau, y, X, covariance), n=1, step=1e-4)

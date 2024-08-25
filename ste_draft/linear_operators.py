@@ -73,10 +73,6 @@ class TraitCovariance:
                 x[j, i] /= Lx[Lp[j]]
                 for p in range(Lp[j] + 1, Lp[j + 1]):
                     x[Li[p], i] -= Lx[p] * x[j, i]
-        #for j in range(0, r):  # why is this so much slower?
-        #   x[j] /= Lx[Lp[j]]
-        #   for p in range(Lp[j] + 1, Lp[j + 1]):
-        #       x[Li[p]] -= Lx[p] * x[j]
         return x
 
     @staticmethod
@@ -93,10 +89,6 @@ class TraitCovariance:
                 for p in range(Lp[j] + 1, Lp[j + 1]):
                     x[j, i] -= Lx[p] * x[Li[p], i]
                 x[j, i] /= Lx[Lp[j]]
-        #for j in range(r - 1, -1, -1):  # why is this so much slower?
-        #   for p in range(Lp[j] + 1, Lp[j + 1]):
-        #       x[j] -= Lx[p] * x[Li[p]]
-        #   x[j] /= Lx[Lp[j]]
         return x
 
     def __init__(self, tree_sequence, mutation_rate=1.0):
@@ -115,6 +107,7 @@ class TraitCovariance:
         Matrix-vector product with lower factor, `Z' L^{-T} y`
         Maps from ts.num_edges to ts.num_individuals
         """
+        assert self.L.has_sorted_indices
         return self.Z @ self.forward_solve(self.L.indptr, self.L.indices, self.L.data, y)
 
     def _factor_adjoint(self, y):
@@ -122,23 +115,15 @@ class TraitCovariance:
         Matrix-vector product with upper factor, `L^{-1} Z y`
         Maps from ts.num_individuals to ts.num_edges
         """
+        assert self.L.has_sorted_indices
         return self.backward_solve(self.L.indptr, self.L.indices, self.L.data, self.Z.T @ y)
 
     def __call__(self, sigma, tau, y):
         r"""
         Matrix-vector product, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2) y`
         """
-        # TODO can we do this without forming num_edges x y.shape[1] vectors -- Peter thinks yes
-        assert self.L.has_sorted_indices
         is_vector = y.ndim == 1
         if is_vector: y = y.reshape(-1, 1)
-        ## x = self._factor_adjoint_matvec(y)
-        #Zy = self.Z.T @ y
-        #Zy = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
-        ## x = self._factor_matvec(x) * tau + y * sigma
-        #Zy = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, Zy)
-        #Zy = self.Z @ Zy * tau + y * sigma
-        #if is_vector: Zy = Zy.squeeze()
         x = y * sigma + self._factor(self._factor_adjoint(y)) * tau
         if is_vector: x = x.squeeze()
         return x
@@ -182,16 +167,10 @@ class TraitCovariance:
 
     def as_matrix(self, sigma, tau):
         """
-        For testing only
+        For testing purposes only
         """
-        assert self.L.has_sorted_indices
-        Zd = np.asarray(self.Z.todense())
-        Sigma = Zd.T
-        Sigma = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, Sigma)
-        Sigma = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, Sigma)
-        Sigma = tau * Zd @ Sigma + sigma * np.eye(self.dim)
-        # Z = self.Z.toarray()
-        # Sigma = np.eye(self.dim) * sigma + self._factor(self._factor_adjoint(Z.T)) * tau
+        I = np.eye(self.dim)
+        Sigma = I * sigma + self._factor(self._factor_adjoint(I)) * tau
         return Sigma
 
     def simulate(self, sigma, tau, rng, num_samples=1):
@@ -203,11 +182,6 @@ class TraitCovariance:
         e = rng.normal(size=(self.dim, num_samples)) * np.sqrt(sigma)
         y = g + e
         return u.squeeze(), g.squeeze(), y.squeeze(), 
-        #u = rng.normal(size=(self.factor_dim, 1))
-        #r = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, u).flatten() * np.sqrt(tau)
-        #x = self.Z @ r
-        #e = rng.normal(size=self.dim) * np.sqrt(sigma)
-        #return u, r, x, x + e
 
 
 class NystromPreconditioner:

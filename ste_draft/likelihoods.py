@@ -67,6 +67,10 @@ def stochastic_gradient(sigma, tau, y, covariance, preconditioner, num_samples=1
 
 
 def exact_loglikelihood_reml(sigma: float, tau: float, y: np.ndarray, X: np.ndarray, covariance: TraitCovariance, use_qr: bool = True) -> float:
+    """
+    log |G(sigma, tau)| + log |X' G(sigma, tau)^{-1} X| + (y - X b_hat)' G(sigma, tau)^{-1} (y - X b_hat)
+    b_hat = (X' G(sigma, tau)^{-1} X)^{-1} X' G(sigma, tau)^{-1} y
+    """
     G = covariance.as_matrix(sigma, tau)
     sign, Gldet = np.linalg.slogdet(G)
     assert sign > 0

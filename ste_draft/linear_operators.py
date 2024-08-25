@@ -30,6 +30,8 @@ Then use stochastic gradient descent to optimize `log(s), log(t)`:
 Riffing on: https://proceedings.mlr.press/v162/wenger22a/wenger22a.pdf
 """
 
+from __future__ import annotations
+
 import tskit
 import numba
 import numpy as np
@@ -54,7 +56,7 @@ _f2w = numba.types.Array(numba.types.float64, 2, 'C', readonly=False)
 
 class TraitCovariance:
     """
-    Covariance contribution from tree sequence: given `y = Z u + e` where `u ~
+    Covariance between observations given `y = Z u + e` where `u ~
     N(0, tau L^{-1} L^{-T})` and `e ~ N(0, sigma I)`, then `y ~ N(0, tau Z
     L^{-1} L^{-T} Z^T + sigma I)`
     """
@@ -64,7 +66,6 @@ class TraitCovariance:
     def backward_solve(Lp, Li, Lx, y):
         """
         `L` is lower-triangular Cholesky factor in CSC format: solve `L x = y`.
-        `y` is updated in-place.
         """
         r, c = y.shape
         x = y.copy()
@@ -80,7 +81,6 @@ class TraitCovariance:
     def forward_solve(Lp, Li, Lx, y):
         """
         `L` is lower-triangular Cholesky factor in CSC format: solve `L' x = y`.
-        `y` is updated in-place.
         """
         r, c = y.shape
         x = y.copy()
@@ -91,7 +91,7 @@ class TraitCovariance:
                 x[j, i] /= Lx[Lp[j]]
         return x
 
-    def __init__(self, tree_sequence, mutation_rate=1.0):
+    def __init__(self, tree_sequence: tskit.TreeSequence, mutation_rate: float = 1.0):
         ts = operations.split_upwards(tree_sequence)
         mutational_target = mutation_rate * (ts.edges_right - ts.edges_left) * \
             (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
@@ -102,7 +102,7 @@ class TraitCovariance:
         self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(mutational_target))
         self.L.sort_indices()
 
-    def _factor(self, y):
+    def _factor(self, y: np.ndarray) -> np.ndarray:
         r"""
         Matrix-vector product with lower factor, `Z' L^{-T} y`
         Maps from ts.num_edges to ts.num_individuals
@@ -110,7 +110,7 @@ class TraitCovariance:
         assert self.L.has_sorted_indices
         return self.Z @ self.forward_solve(self.L.indptr, self.L.indices, self.L.data, y)
 
-    def _factor_adjoint(self, y):
+    def _factor_adjoint(self, y: np.ndarray) -> np.ndarray:
         r"""
         Matrix-vector product with upper factor, `L^{-1} Z y`
         Maps from ts.num_individuals to ts.num_edges
@@ -118,7 +118,7 @@ class TraitCovariance:
         assert self.L.has_sorted_indices
         return self.backward_solve(self.L.indptr, self.L.indices, self.L.data, self.Z.T @ y)
 
-    def __call__(self, sigma, tau, y):
+    def __call__(self, sigma: float, tau: float, y: np.ndarray) -> np.ndarray:
         r"""
         Matrix-vector product, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2) y`
         """
@@ -128,7 +128,16 @@ class TraitCovariance:
         if is_vector: x = x.squeeze()
         return x
 
-    def solve(self, sigma, tau, y, preconditioner=None, maxitt=None, atol=0., rtol=1e-5):
+    def solve(
+        self, 
+        sigma: float, 
+        tau: float, 
+        y: np.ndarray, 
+        preconditioner: NystromPreconditioner = None, 
+        maxitt: int = None, 
+        atol: float = 0.0, 
+        rtol: float = 1e-5,
+    ) -> (np.ndarray, int, bool):
         r"""
         Matrix-vector product with inverse, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2)^{-1} y`
 
@@ -165,7 +174,7 @@ class TraitCovariance:
         if is_vector: x = x.squeeze()
         return x, itt, success
 
-    def as_matrix(self, sigma, tau):
+    def as_matrix(self, sigma: float, tau: float) -> np.ndarray:
         """
         For testing purposes only
         """
@@ -173,14 +182,20 @@ class TraitCovariance:
         Sigma = I * sigma + self._factor(self._factor_adjoint(I)) * tau
         return Sigma
 
-    def simulate(self, sigma, tau, rng, num_samples=1):
+    def simulate(
+        self, 
+        sigma: float, 
+        tau: float, 
+        rng: np.random.Generator = None, 
+        num_samples: int = 1,
+    ) -> np.ndarray:
         """
         Return (edge effects, genetic values, observed values)
         """
+        if rng is None: rng = np.random.default_rng()
         u = rng.normal(size=(self.factor_dim, num_samples)) * np.sqrt(tau)
         g = self._factor(u)
-        e = rng.normal(size=(self.dim, num_samples)) * np.sqrt(sigma)
-        y = g + e
+        y = g + rng.normal(size=(self.dim, num_samples)) * np.sqrt(sigma)
         return u.squeeze(), g.squeeze(), y.squeeze(), 
 
 
@@ -191,7 +206,7 @@ class NystromPreconditioner:
     """
 
     @staticmethod
-    def _rand_eigh(covariance, rank, samples, seed):
+    def _rand_eigh(covariance: TraitCovariance, rank: int, samples: int, seed: int) -> (np.ndarray, np.ndarray):
         """
         Algorithm 16 in https://arxiv.org/pdf/2002.01387
         """
@@ -208,62 +223,84 @@ class NystromPreconditioner:
         D = np.maximum(D ** 2 - shift, 0)
         return D[:rank], U[:, :rank]
 
-    def __init__(self, covariance, rank, samples=None, seed=None):
+    def __init__(self, covariance: TraitCovariance, rank: int, samples: int = None, seed: int = None):
         samples = rank if samples is None else max(rank, samples)
         self.dim = covariance.dim
         self.D, self.U = self._rand_eigh(covariance, rank, samples, seed)
 
-    def __call__(self, sigma, tau, y):
+    def _spectrum(self, sigma: float, tau: float) -> np.ndarray:
+        return self.D * tau / sigma + 1
+
+    def __call__(self, sigma: float, tau: float, y: np.ndarray) -> np.ndarray:
         """
         Inverse-vector product: section 17.2 in https://arxiv.org/pdf/2002.01387
         """
         is_vector = y.ndim == 1
         if is_vector: y = y.reshape(-1, 1)
-        S = (self.D * tau + sigma) / (np.min(self.D) * tau + sigma)
-        My = (self.U.T @ y) * (1 - 1 / S)[:, np.newaxis]
-        My = y - self.U @ My
-        if is_vector: My = My.squeeze()
-        return My
+        S = self._spectrum(sigma, tau)
+        x = self.U.T @ y * np.expand_dims(1 - 1 / S, 1)
+        x = y - self.U @ x
+        if is_vector: x = x.squeeze()
+        return x
 
-    def as_matrix(self, sigma, tau):
+    def as_matrix(self, sigma: float, tau: float) -> np.ndarray:
         """
-        For testing only
+        Not inverted, for testing only
         """
-        S = (self.D * tau + sigma) / (np.min(self.D) * tau + sigma)
+        S = self._spectrum(sigma, tau)
         return np.eye(self.dim) - self.U @ np.diag(1 - S) @ self.U.T
 
-    def logdet(self, sigma, tau):
-        S = (self.D * tau + sigma) / (np.min(self.D) * tau + sigma)
-        return np.sum(np.log(S))
+    def logdet(self, sigma: float, tau: float) -> float:
+        """
+        Log-determinant of preconditioner
+        """
+        return np.sum(np.log(self._spectrum(sigma, tau)))
 
-    def grad_sigma(self, sigma, tau, y=None):
+    def gradient(self, sigma: float, tau: float, y: np.ndarray = None) -> float:
+        """
+        Gradient of log-determinant with regard to spectrum
+
+        Returns `trace(solve(preconditioner, deriv(preconditioner, spectrum)))`,
+        or if vectors `y` are passed `preconditioner @ deriv(preconditioner, spectrum) @ y`
+        """
+        S = self.spectrum(sigma, tau)
+        Sd = (1 - 1 / S)
+        if y is None:
+            return np.sum(Sd)
+        assert y.ndim == 2
+        Sd = (self.U.T @ y) * Sd[:, np.newaxis]
+        return self.U @ Sd
+        # isn't this just __call__ minus the identity
+
+    # --- remove these --- #
+
+    def grad_sigma(self, sigma: float, tau: float, y: np.ndarray = None) -> float:
         """
         return trace(solve(preconditioner, deriv(preconditioner, sigma)))
         or if vectors `y` are passed:
         return preconditioner @ deriv(preconditioner, sigma) @ y
         """
-        spectrum = self.D * tau + sigma
-        norm = np.min(spectrum)
-        spectrum /= norm
-        grad_sigma = (1 - spectrum) / spectrum / norm
+        S = self.D * tau / sigma + 1
+        grad_sigma = -(1 - 1 / S) / sigma
         if y is None:
             return np.sum(grad_sigma)
         assert y.ndim == 2
-        control = (self.U.T @ y) * grad_sigma[:, np.newaxis]
-        return self.U @ control
+        grad_sigma = (self.U.T @ y) * grad_sigma[:, np.newaxis]
+        return self.U @ grad_sigma
 
-    def grad_tau(self, sigma, tau, y=None):
+    def grad_tau(self, sigma: float, tau: float, y: np.ndarray = None) -> float:
         """
-        return trace(solve(preconditioner, deriv(preconditioner, tau)))
-        or if vectors `y` are passed:
-        return preconditioner @ deriv(preconditioner, tau) @ y
+        Gradient of log-determinant with regard to tau.
+
+        Returns `trace(solve(preconditioner, deriv(preconditioner, tau)))`,
+        or if vectors `y` are passed `preconditioner @ deriv(preconditioner, tau) @ y`
         """
-        spectrum = self.D * tau + sigma
-        norm = np.min(spectrum)
-        spectrum /= norm
-        grad_tau = (self.D - np.min(self.D) * spectrum) / spectrum / norm
+        S = self.D * tau / sigma + 1
+        grad_tau = (1 - 1 / S) / tau
         if y is None:
             return np.sum(grad_tau)
         assert y.ndim == 2
-        control = (self.U.T @ y) * grad_tau[:, np.newaxis]
-        return self.U @ control
+        grad_tau = (self.U.T @ y) * grad_tau[:, np.newaxis]
+        return self.U @ grad_tau
+
+

@@ -3,6 +3,7 @@ import tskit
 import time
 import msprime
 import numpy as np
+import numba
 import scipy.sparse as sparse
 
 from linear_operators import TraitCovariance, NystromPreconditioner
@@ -26,31 +27,44 @@ def run_simulation(num_samples, sequence_length, rank, seed=None):
     """
     Solve system with CG, record work
     """
+
     rng = np.random.default_rng(seed)
+    num_threads = 4
+    numba.set_num_threads(num_threads)
+    
+    n_pops = 20
+    n_samples = num_samples // n_pops
+    s_length = 5e5
     ne = 1e4
-    tau2 = 0.5
-    sigma2 = 1.5
+    
+    island_model = msprime.Demography.island_model([ne] * n_pops, 1e-8 / n_pops)
+    for i in range(1, n_pops):
+        island_model.add_mass_migration(time=2*ne, source=i, dest=0, proportion=1.0)
+    
     ts = msprime.sim_ancestry(
-        samples=num_samples,
+        samples={f"pop_{i}": n_samples for i in range(n_pops)},
         recombination_rate=1e-8,
-        sequence_length=sequence_length,
-        population_size=ne,
-        random_seed=seed,
-        #model=msprime.SmcKApproxCoalescent(),
+        sequence_length=s_length,
+        demography=island_model,
+        random_seed=1024,
     )
+    print(ts.num_edges)
     covariance = TraitCovariance(ts, mutation_rate=1e-10)
     preconditioner = NystromPreconditioner(covariance, rank=rank, samples=rank * 2, seed=seed + 1)
+
+    tau2 = 0.5
+    sigma2 = 1.5
     _, y_bar, y = covariance.simulate(sigma2, tau2, rng)
 
     solution, iterations, run_time, resid_norm = run_cg(sigma2, tau2, covariance, preconditioner, y)
     print(
-        f"(Rank {rank} preconditioner; {num_samples} diploids; {sequence_length} bp) " 
+        f"(Rank {rank} preconditioner; {num_samples} diploids; {covariance.factor_dim} edges; {sequence_length} bp) " 
         f"CG iterations: {iterations}; runtime: {run_time:.2f} seconds; residual norm: {resid_norm}"
     )
 
     solution, iterations, run_time, resid_norm = run_cg(sigma2, tau2, covariance, None, y)
     print(
-        f"(No preconditioner; {num_samples} diploids; {sequence_length} bp) " 
+        f"(No preconditioner; {num_samples} diploids; {covariance.factor_dim} edges; {sequence_length} bp) " 
         f"CG iterations: {iterations}; runtime: {run_time:.2f} seconds; residual norm: {resid_norm}"
     )
 

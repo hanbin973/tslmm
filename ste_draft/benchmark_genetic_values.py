@@ -5,7 +5,7 @@ import msprime
 import matplotlib.pyplot as plt
 import scipy
 
-from likelihoods import genetic_values
+from genetic_values import genetic_values
 from linear_operators import TraitCovariance, NystromPreconditioner
 
 
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     preconditioner = NystromPreconditioner(covariance, rank=100, samples=200, seed=1)
 
     true_tau = 0.5
-    true_sigma = 20.0
+    true_sigma = 4.0
     rng = np.random.default_rng(1024)
     _, true_genetic_values, traits = covariance.simulate(true_sigma, true_tau, rng)
     cov_mat = covariance.as_matrix(0, 1)

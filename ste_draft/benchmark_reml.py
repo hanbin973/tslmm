@@ -4,25 +4,25 @@ import numpy as np
 import msprime
 import matplotlib.pyplot as plt
 
-from likelihoods import exact_loglikelihood, exact_gradient, stochastic_gradient
+from likelihoods import exact_loglikelihood_reml, exact_gradient_reml, stochastic_gradient_reml
 from linear_operators import TraitCovariance, NystromPreconditioner
 
 
-def compare_exact_vs_stochastic(sigma, tau, y, covariance, preconditioner, rng=None, num_samples=4):
-    loglik = exact_loglikelihood(sigma, tau, y, covariance)
+def compare_exact_vs_stochastic(sigma, tau, y, X, covariance, preconditioner, rng=None, num_samples=4):
+    loglik = exact_loglikelihood_reml(sigma, tau, y, X, covariance)
 
     st = time.time()
-    exact = exact_gradient(sigma, tau, y, covariance)
+    exact = exact_gradient_reml(sigma, tau, y, X, covariance)
     en = time.time()
     exact_timing = en - st
 
     st = time.time()
-    stochastic = stochastic_gradient(sigma, tau, y, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=False)
+    stochastic = stochastic_gradient_reml(sigma, tau, y, X, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=False)
     en = time.time()
     stochastic_timing = en - st
 
     st = time.time()
-    stochastic_vr = stochastic_gradient(sigma, tau, y, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=True)
+    stochastic_vr = stochastic_gradient_reml(sigma, tau, y, X, covariance, preconditioner, num_samples=num_samples, rng=rng, variance_reduction=True)
     en = time.time()
     stochastic_vr_timing = en - st
 
@@ -62,7 +62,10 @@ if __name__ == "__main__":
     true_tau = 0.5
     true_sigma = 1.5
     rng = np.random.default_rng(1024)
-    _, _, traits = covariance.simulate(true_sigma, true_tau, rng)
+    _, _, random_effects = covariance.simulate(true_sigma, true_tau, rng)
+    covariates = np.random.randn(ts.num_individuals, 5)
+    true_beta = np.random.randn(5)
+    traits = covariates @ true_beta + random_effects
     
     sigma_grid = np.linspace(1.0, 2.0, 25)
     tau_grid = np.linspace(0.3, 0.8, 25)
@@ -72,7 +75,7 @@ if __name__ == "__main__":
     sigma_approx = []
     sigma_approx_vr = []
     for sigma in sigma_grid:
-        like, exact, stochastic, stochastic_vr = compare_exact_vs_stochastic(sigma, true_tau, traits, covariance, preconditioner, rng=rng)
+        like, exact, stochastic, stochastic_vr = compare_exact_vs_stochastic(sigma, true_tau, traits, covariates, covariance, preconditioner, rng=rng)
         sigma_like.append(like)
         sigma_exact.extend(exact)
         sigma_approx.extend(stochastic)
@@ -86,7 +89,7 @@ if __name__ == "__main__":
     tau_approx = []
     tau_approx_vr = []
     for tau in tau_grid:
-        like, exact, stochastic, stochastic_vr = compare_exact_vs_stochastic(true_sigma, tau, traits, covariance, preconditioner, rng=rng)
+        like, exact, stochastic, stochastic_vr = compare_exact_vs_stochastic(true_sigma, tau, traits, covariates, covariance, preconditioner, rng=rng)
         tau_like.append(like)
         tau_exact.extend(exact)
         tau_approx.extend(stochastic)
@@ -122,4 +125,4 @@ if __name__ == "__main__":
     axs[1, 1].set_xlabel("tau")
     fig.tight_layout()
 
-    plt.savefig("figs/stochastic_grad_benchmark.png")
+    plt.savefig("figs/stochastic_grad_reml_benchmark.png")

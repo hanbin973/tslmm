@@ -93,13 +93,13 @@ class TraitCovariance:
 
     def __init__(self, tree_sequence: tskit.TreeSequence, mutation_rate: float = 1.0):
         ts = operations.split_upwards(tree_sequence)
-        mutational_target = mutation_rate * (ts.edges_right - ts.edges_left) * \
-            (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
         self.dim = ts.num_individuals
         self.factor_dim = ts.num_edges
+        self.D = mutation_rate * (ts.edges_right - ts.edges_left) * \
+            (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
         self.Z = matrices.edge_individual_matrix(ts).T
         self.L = scipy.sparse.identity(ts.num_edges) - matrices.edge_adjacency(ts).T
-        self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(mutational_target))
+        self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(self.D))
         self.L.sort_indices()
 
     def _factor(self, y: np.ndarray) -> np.ndarray:
@@ -192,6 +192,7 @@ class TraitCovariance:
         """
         Return (edge effects, genetic values, observed values)
         """
+        # TODO: should edge effects be scaled by noise
         if rng is None: rng = np.random.default_rng()
         u = rng.normal(size=(self.factor_dim, num_samples)) * np.sqrt(tau)
         g = self._factor(u)

@@ -8,6 +8,7 @@ import scipy
 from genetic_values import edge_effects
 from linear_operators import TraitCovariance, NystromPreconditioner
 
+# something not working here?
 
 if __name__ == "__main__":
     
@@ -17,24 +18,35 @@ if __name__ == "__main__":
     ts = msprime.sim_ancestry(
         samples=1000,
         recombination_rate=1e-8,
-        sequence_length=1e6,
+        sequence_length=1e4, #1e6,
         population_size=1e4,
         random_seed=1024,
     )
     covariance = TraitCovariance(ts, mutation_rate=1e-10)
     preconditioner = NystromPreconditioner(covariance, rank=100, samples=200, seed=1)
+    print(covariance.factor_dim)
 
-    true_tau = 0.5
-    true_sigma = 4.0
+    true_tau = 2.5
+    true_sigma = 1.0
     rng = np.random.default_rng(1024)
-    true_edge_effects, _, traits = covariance.simulate(true_sigma, true_tau, rng)
+    true_edge_effects, true_genetic_values, traits = covariance.simulate(true_sigma, true_tau, rng)
 
-    predictions, var_predictions = edge_effects(true_sigma, true_tau, traits, covariance, preconditioner, rng=rng, num_samples=0)
-    std_dev = np.sqrt(var_predictions)
+    # DEBUG: test exact on small example
+    factor = scipy.sparse.linalg.spsolve(covariance.L, covariance.Z.T).toarray()
+    posterior_variance = factor @ factor.T / true_sigma + np.eye(covariance.factor_dim) / true_tau
+    est_edge_effects = np.linalg.solve(posterior_variance, factor @ traits / true_sigma)
+    print(np.std(est_edge_effects), np.std(true_edge_effects))
+    scaling = np.sqrt(covariance.D)
+    # /DEBUG
+
+    #predictions, var_predictions = edge_effects(true_sigma, true_tau, traits, covariance, preconditioner, rng=rng, num_samples=0)
+    #std_dev = np.sqrt(var_predictions)
     
-    plt.scatter(true_edge_effects, predictions, s=4)
+    #plt.scatter(true_edge_effects, predictions, s=4)
+    plt.scatter(true_edge_effects * scaling, est_edge_effects * scaling, s=4)
     plt.axline((0, 0), slope=1, linestyle="--", color="black")
-    plt.text(0.01, 0.99, f"$r^2 = {np.corrcoef(true_edge_effects, predictions)[0, 1] ** 2:.2f}$", transform=plt.gca().transAxes, ha='left', va='top')
+    #plt.text(0.01, 0.99, f"$r^2 = {np.corrcoef(true_edge_effects, predictions)[0, 1] ** 2:.2f}$", transform=plt.gca().transAxes, ha='left', va='top')
+    plt.text(0.01, 0.99, f"$r^2 = {np.corrcoef(true_edge_effects, est_edge_effects)[0, 1] ** 2:.2f}$", transform=plt.gca().transAxes, ha='left', va='top')
     plt.ylabel("Fitted edge effects")
     plt.xlabel("True edge effects")
     plt.savefig("figs/edge_effects_benchmark.png")

@@ -85,6 +85,8 @@ def edge_effects(
                = I t - t^2 L^{-1} Z' (I s + t Z (L' L)^{-1} Z')^{-1} Z L^{-T} 
     """
 
+    # TODO: this isn't working -- check exact on small example, first
+
     if rng is None: rng = np.random.default_rng()
     M = lambda y: preconditioner(sigma, tau, y)
 
@@ -93,8 +95,8 @@ def edge_effects(
     assert converged
 
     # edge effects
-    E_u = covariance._factor_adjoint(residuals - solution) * tau / sigma  # L^{-1} Z' x
-    V_u = np.full(covariance.factor_dim)
+    E_u = covariance._factor_adjoint(np.expand_dims(residuals - solution, 1)).squeeze() * tau / sigma  # L^{-1} Z' x
+    V_u = np.full(covariance.factor_dim, np.nan)
 
     def _covariance_diag(test_vectors):
         if test_vectors.ndim == 1: test_vectors = test_vectors.reshape(-1, 1)

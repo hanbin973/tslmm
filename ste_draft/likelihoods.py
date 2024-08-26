@@ -72,28 +72,19 @@ def exact_loglikelihood_reml(sigma: float, tau: float, y: np.ndarray, X: np.ndar
     b_hat = (X' G(sigma, tau)^{-1} X)^{-1} X' G(sigma, tau)^{-1} y
     """
     G = covariance.as_matrix(sigma, tau)
+    # L = np.linalg.cholesky(G) << solve via a factorisation
     sign, Gldet = np.linalg.slogdet(G)
     assert sign > 0
-    if use_qr:  # stable
-        Q, R = np.linalg.qr(X)
-        GinvQ = np.linalg.solve(G, Q)
-        GinvY = np.linalg.solve(G, y)
-        QinvQ = Q.T @ GinvQ
-        resid = y - Q @ np.linalg.solve(QinvQ, Q.T @ GinvY)
-        Ginvr = np.linalg.solve(G, resid)  
-        sign, Qldet = np.linalg.slogdet(QinvQ)
-        assert sign > 0
-        Xldet = Qldet + 2 * np.sum(np.log(np.abs(R.diagonal())))
-    else:
-        GinvX = np.linalg.solve(G, X)
-        GinvY = np.linalg.solve(G, y)
-        XinvX = X.T @ GinvX
-        resid = y - X @ np.linalg.solve(XinvX, X.T @ GinvY)
-        Ginvr = np.linalg.solve(G, resid)  
-        sign, Gldet = np.linalg.slogdet(G)
-        assert sign > 0
-        sign, Xldet = np.linalg.slogdet(XinvX)
-        assert sign > 0
+    if use_qr:
+        X, R = np.linalg.qr(X)
+        Gldet += 2 * np.sum(np.log(np.abs(R.diagonal())))
+    GinvX = np.linalg.solve(G, X)
+    GinvY = np.linalg.solve(G, y)
+    XinvX = X.T @ GinvX
+    resid = y - X @ np.linalg.solve(XinvX, X.T @ GinvY)
+    Ginvr = np.linalg.solve(G, resid)  
+    sign, Xldet = np.linalg.slogdet(XinvX)
+    assert sign > 0
     deviance = Gldet + Xldet + resid.T @ Ginvr
     return -deviance / 2
 

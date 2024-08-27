@@ -230,7 +230,7 @@ print(Qy)
 
 # Best linear estimate of intercept
 # (simple since it's all scalar)
-intercept_hat = (X.T @ phenotype_values) / (X.T @ Qy @ X)
+intercept_hat = (X.T @ phenotype_values) / (X.T @ X)
 print(np.column_stack((intercept, intercept_hat)))
 
 # Best linear prediction of genetic values

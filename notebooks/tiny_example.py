@@ -87,21 +87,21 @@ SVG(ts.draw_svg())
 # W (n_g * n_edges) design matrix linking g with r
 # r (n_edges * 1) edge values
 # 
-# r = Tu*
-# T (n_edges * n_edges) design matrix linking r with u (summing up u* into edge values)
-# u* (n_edges * 1) edge "innovation" effects on edge areas; u ~ N(0, D sigma^2_u)
+# r = Tu
+# T (n_edges * n_edges) design matrix linking r with u (summing up u into edge values)
+# u (n_edges * 1) edge "innovation" effects on edge areas; u ~ N(0, D sigma^2_u)
 # (due to new mutations arising along the DNA span of edges between "parent" and "child"
 #  nodes and along the time length of edges --> edge areas)
 # 
-# r = TSu; u ~ N(0, I sigma^2_u)
-# T (n_edges * n_edges) edge design matrix linking r with u (summing up u into edge values)
+# r = TSu*; u* ~ N(0, I sigma^2_u)
+# T (n_edges * n_edges) edge design matrix linking r with u* (summing up u* into edge values)
 # S (n_edges * n_edges) diagonal matrix with sqrt(edge areas)
-# u (n_edges * 1) normalised edge "innovation" effects; u ~ N(0, sigma^2_u)
+# u (n_edges * 1) normalised edge "innovation" effects; u* ~ N(0, sigma^2_u)
 # 
 # Covariance between genetic values:
 # 
-# C_g = Var(g | W, T, S) = Var(Wr | W, T, S) = Var(WTSu | W, T, S)
-#                        = WTS Var(u) S'T'W' = WTDT'W' sigma^2_u = G sigma^2_u
+# C_g = Var(g | W, T, S) = Var(Wr | W, T, S) = Var(WTSu* | W, T, S)
+#                        = WTS Var(u*) S'T'W' = WTDT'W' sigma^2_u = G sigma^2_u
 # 
 # Covariance between edge values:
 # 
@@ -128,13 +128,13 @@ W = matrices.edge_individual_matrix(ts).T
 W.shape
 print(W)
 
-# Edge "structure" matrix (TInv = I-E) (adjacent edges)
+# Edge value "structure" matrix (TInv = I-E) (adjacent edges)
 TInv = sparse.identity(ts.num_edges) - matrices.edge_adjacency(ts).T
 TInv.sort_indices() # ensure order for working across Python packages
 TInv.shape
 print(TInv.toarray()) # it's upper-triangular because we order/number edges back in time
 
-# Edge design matrix (T = inv(I-E)) (edge connections back in time)
+# Edge value design matrix (T = inv(I-E)) (edge connections back in time)
 T = np.linalg.inv(TInv.toarray())
 print(T) # it's upper-triangular because we order/number edges back in time
 
@@ -148,11 +148,31 @@ DInv = sparse.diags_array(1 / edge_areas)
 SInv = np.sqrt(DInv)
 print(np.column_stack((edge_spans, edge_lengths, edge_areas, (1 / edge_areas).round(3))))
 
-# Cholesky factor of precision coefficient matrix
+# Precision coefficient matrix for edge effects per unit area (note the missing * sigma^(-2)_u)
+Qus = sparse.identity(ts.num_edges)
+print(Qus.toarray().round(3))
+# See below for print((Qus.toarray() / sigma2u).round(3))
+
+# Covariance coefficient matrix for edge effects per unit area (note the missing * sigma^2_u)
+Cus = sparse.identity(ts.num_edges).toarray()
+print(Cus.round(3))
+# See below for print((Qu / sigma2u).round(3))
+
+# Precision coefficient matrix for edge effects (note the missing * sigma^(-2)_u)
+Qu = DInv
+print(Qu.toarray().round(3))
+# See below for print((Qu.toarray() / sigma2u).round(3))
+
+# Covariance coefficient matrix for edge effects (note the missing * sigma^2_u)
+Cu = np.linalg.inv(Qu.toarray())
+print(Cu.round(3))
+# See below for print((Qu / sigma2u).round(3))
+
+# Cholesky factor of precision coefficient matrix for edge values
 LInv = SInv @ TInv
 print(LInv.toarray().round(3))
 
-# Cholesky factor of covariance coefficient matrix
+# Cholesky factor of covariance coefficient matrix for edge values
 L = np.linalg.inv(LInv.toarray())
 print(L.round(3))
 # print((T @ S).round(3))
@@ -160,41 +180,71 @@ print(L.round(3))
 # Precision coefficient matrix for edge values (note the missing * sigma^(-2)_u)
 Qr = LInv.T @ LInv
 print(Qr.toarray().round(3))
+# See below for print((Qr.toarray() / sigma2u).round(3))
 
 # Covariance coefficient matrix for edge values (note the missing * sigma^2_u)
 Cr = np.linalg.inv(Qr.toarray())
 print(Cr.round(3))
 Cr = L @ L.T
 print(Cr.round(3))
+# See below for print((Cr / sigma2u).round(3))
+
+# Covariance coefficient matrix for node values (note the missing * sigma^2_u)
+N = matrices.edge_child_matrix(ts).T
+print(N)
+Cn = N @ Cr @ N.T
+print(Cn.round(3))
+# See below for print((Cn * sigma2u).round(3))
+# The last row and column are full of 0s because the last node is the root
+
+# Precision coefficient matrix for node values (note the missing * sigma^(-2)_u)
+Qn = np.linalg.inv(Cn[0:(ts.num_nodes - 1), 0:(ts.num_nodes - 1)])
+print(Qn.round(3))
+# See below for print((Qn / sigma2u).round(3))
 
 # Covariance coefficient matrix for genetic values (note the missing * sigma^2_u)
 Cg = W @ Cr @ W.T
 print(Cg.round(3))
-print((Cg * sigma2u).round(3))
+# See below for print((Cg * sigma2u).round(3))
 
 # Precision coefficient matrix for genetic values (note the missing * sigma^(-2)_u)
 Qg = np.linalg.inv(Cg)
 print(Qg.round(3))
-print((Qg / sigma2u).round(3))
+# See below for print((Qg / sigma2u).round(3))
 
 # ---- Simulate values ----
 
 sigma2u = 0.001
+print((Cus * sigma2u).round(3))
+print((Qus.toarray() / sigma2u).round(3))
+
+print((Cu * sigma2u).round(3))
+print((Qu.toarray() / sigma2u).round(3))
+
+print((Cr * sigma2u).round(3))
+print((Qr.toarray() / sigma2u).round(3))
+
+print((Cn * sigma2u).round(3))
+print((Qn / sigma2u).round(3))
+
+print((Cg * sigma2u).round(3))
+print((Qg / sigma2u).round(3))
+
 edge_effects = np.random.normal(size = ts.num_edges,
                                 scale = np.sqrt(edge_areas * sigma2u)).round(3)
 # For this pedagogical demonstration we use large & simple values for edge effects
-# (swap with the above sampling if you like)
+# (you can swap with the above sampled edge effects instead)
 #                        0,  1, 2, 3, 4, 5,  6, 7,  8, 9, 10
 edge_effects = np.array([0, -1, 1, 0, 2, 0, -1, 2, -1, 0, -1])
-print(edge_effects)
-# TODO: Are these edge_effects per sqrt(unit of area) or sqrt(area)?
+print(edge_effects) # u 
+
+edge_effects_per_unit_area = edge_effects / np.sqrt(edge_areas)
+print(edge_effects_per_unit_area) # u*
 
 edge_values = T @ edge_effects # r = Tu
 print(edge_values)
 
-N = matrices.edge_child_matrix(ts).T
-print(N)
-node_values = N @ edge_values # n = Nr = NTu 
+node_values = N @ edge_values # n = Nr = NTu
 print(node_values)
 
 genetic_values = W @ edge_values # g = Wr = WTu (via edge values - canonical approach)
@@ -209,7 +259,7 @@ sigma2e = 1
 residuals = np.random.normal(size = ts.num_individuals,
                              scale = np.sqrt(sigma2e)).round()
 # For this pedagogical demonstration we use small & simple values for residuals
-# (swap with the above sampling if you like)
+# (you can swap with the above sampled residuals instead)
 #                       0,    1
 residuals = np.array([0.1, -0.1])
 print(residuals)
@@ -218,9 +268,9 @@ intercept = 10
 phenotype_values = intercept + genetic_values + residuals
 print(phenotype_values)
 
-# ---- Estimate effects ----
+# ---- Estimate effects and values (using simple pedagogic approach) ----
 
-# We assume here we know variance components and only estimate effects!
+# Throughout we assume we know variance components!
 
 # Phenotypic variance and precision
 Cy = Cg * sigma2u + np.eye(N = len(phenotype_values)) * sigma2e
@@ -229,40 +279,41 @@ Qy = np.linalg.inv(Cy)
 print(Qy)
 
 # Best linear estimate of intercept
-# (simple since it's all scalar)
 intercept_hat = (X.T @ phenotype_values) / (X.T @ X)
 print(np.column_stack((intercept, intercept_hat)))
 
-# Best linear prediction of genetic values
-# cov(g, y = g + e) inv(var(y)) (y - E(y))
-# cov(g, g) ...
-genetic_values_hat = (Cg * sigma2u) @ (np.linalg.inv(Cy) @ (phenotype_values - intercept_hat))
+# Best linear prediction of genetic values (g)
+# cov(g, (y = g + e)') inv(var(y)) (y - E(y))
+tmp = (np.linalg.inv(Cy) @ (phenotype_values - intercept_hat))
+# cov(g, g') ...
+genetic_values_hat = (Cg * sigma2u) @ tmp
 print(np.column_stack((genetic_values, genetic_values_hat)))
 
-# Best linear prediction of node values (g = Mn = MNr)
-# cov(n, y = g + e) inv(var(y)) (y - E(y))
-# cov(n, g = Mn) ...
-# cov(n, nM') ...
-# cov(Nr, rN'M') ...
-node_values_hat = (N @ Cr @ N.T @ M.T * sigma2u) @ (np.linalg.inv(Cy) @ (phenotype_values - intercept_hat))
+# Best linear prediction of node values (n; g = Mn = MNr)
+# cov(n, (y = g + e)') inv(var(y)) (y - E(y))
+# cov(n, g' = nM') ...
+node_values_hat = (Cn @ M.T * sigma2u) @ tmp
 print(np.column_stack((node_values, node_values_hat)))
 
-# Best linear prediction of edge values (g = Wr)
-# cov(r, y = g + e) inv(var(y)) (y - E(y))
-# cov(r, g = Wr) ...
-# cov(r, rW') ...
-edge_values_hat = (Cr @ W.T * sigma2u) @ (np.linalg.inv(Cy) @ (phenotype_values - intercept_hat))
+# Best linear prediction of edge values (r; g = Wr)
+# cov(r, (y = g + e)') inv(var(y)) (y - E(y))
+# cov(r, g' = rW') ...
+edge_values_hat = (Cr @ W.T * sigma2u) @ tmp
 print(np.column_stack((edge_values, edge_values_hat)))
 
-# Best linear prediction of edge effects (g = WTu)
-# cov(u, y = g + e) inv(var(y)) (y - E(y))
-# cov(u, g = WTu) ...
-# cov(u, uT'W') ...
-edge_effects_hat = (Cr @ T.T @ W.T * sigma2u) @ (np.linalg.inv(Cy) @ (phenotype_values - intercept_hat))
+# Best linear prediction of edge effects (u; g = WTu)
+# cov(u, (y = g + e)') inv(var(y)) (y - E(y))
+# cov(u, g' = uT'W') ...
+edge_effects_hat = (Cu @ T.T @ W.T * sigma2u) @ tmp
 print(np.column_stack((edge_effects, edge_effects_hat)))
-# TODO: Are these edge_effects per sqrt(unit of area) or sqrt(area)?
 
-# System of equations for the linear mixed model (demo only)
+# Best linear prediction of edge effects per unit area (u*; u = Su*)
+edge_effects_per_unit_area_hat = edge_effects_hat / np.sqrt(edge_areas)
+print(np.column_stack((edge_effects_per_unit_area, edge_effects_per_unit_area_hat)))
+
+# System of equations for the linear mixed model
+# TODO: why do we have differences in estimates? numerical or code errors?
+
 XX = np.array(X.T @ X, ndmin = 2)
 XW = np.array(X.T @ W, ndmin = 2)
 WX = XW.T
@@ -277,21 +328,38 @@ RHS = np.concatenate((Xy, Wy), axis = 0)
 
 solutions_hat = np.linalg.solve(a = LHS, b = RHS)
 
-# TODO: why do we have differences in estimates? numerical or code errors?
-
 intercept_hat2 = solutions_hat[0]
 print(np.column_stack((intercept, intercept_hat, intercept_hat2)))
 
 edge_values_hat2 = solutions_hat[1:12]
 print(np.column_stack((edge_values, edge_values_hat, edge_values_hat2)))
 
-edge_effects_hat2 = LInv @ edge_values_hat2 # r = TSu = Lu --> inv(L) r = u 
+edge_effects_hat2 = TInv @ edge_values_hat2 # r = Tu --> inv(T) r = u
 print(np.column_stack((edge_effects, edge_effects_hat, edge_effects_hat2)))
-edge_effects_hat2.T * np.sqrt(edge_areas)
-# TODO: Are these edge_effects per sqrt(unit of area) or sqrt(area)?
+
+edge_effects_per_unit_area_hat2 = LInv @ edge_values_hat2 # r = TSu* = Lu* --> inv(L) r = u*
+print(np.column_stack((edge_effects_per_unit_area, edge_effects_per_unit_area_hat, edge_effects_per_unit_area_hat2)))
 
 node_values_hat2 = N @ edge_values_hat2 # n = Nr
 print(np.column_stack((node_values, node_values_hat, node_values_hat2)))
 
 genetic_values_hat2 = W @ edge_values_hat2 # g = Wr
 print(np.column_stack((genetic_values, genetic_values_hat, genetic_values_hat2)))
+
+# ---- Estimate effects and values (using tslmm) ----
+
+y = phenotype_values - intercept_hat
+
+sys.path.append(os.getcwd() + "/ste_draft")
+from linear_operators import TraitCovariance, NystromPreconditioner
+from genetic_values import edge_effects as edge_effects_fun
+
+covmat = TraitCovariance(ts)
+precon = NystromPreconditioner(covmat, rank = 1, samples = 10)
+edge_effects_per_unit_area_cg_hat, _ = edge_effects_fun(sigma2e, sigma2u, y, covmat, None)
+Xn = covmat.Z.toarray() @ np.linalg.inv(covmat.L.T.toarray())
+post_var = np.linalg.inv(np.eye(covmat.factor_dim) / sigma2u + Xn.T @ Xn / sigma2e)
+edge_effects_per_unit_area_exact_hat = post_var @ Xn.T @ y / sigma2e
+
+print(np.column_stack((edge_effects_per_unit_area, edge_effects_per_unit_area_hat,
+                       edge_effects_per_unit_area_exact_hat, edge_effects_per_unit_area_cg_hat)))

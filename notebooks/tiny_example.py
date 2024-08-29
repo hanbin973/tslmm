@@ -98,16 +98,25 @@ SVG(ts.draw_svg())
 # S (n_edges * n_edges) diagonal matrix with sqrt(edge areas)
 # u (n_edges * 1) normalised edge "innovation" effects; u* ~ N(0, sigma^2_u)
 # 
-# Covariance between genetic values:
+# n = Nr
+# n (n_nodes * 1) node values
+# N (n_nodes * n_edges) design matrix linking n with r (summing up r into node values)
 # 
-# C_g = Var(g | W, T, S) = Var(Wr | W, T, S) = Var(WTSu* | W, T, S)
-#                        = WTS Var(u*) S'T'W' = WTDT'W' sigma^2_u = G sigma^2_u
+# Covariance between edge values (r = Tu = TSu*):
 # 
-# Covariance between edge values:
-# 
-# C_r = Var(r | T, S) = TDT' sigma^2_u = R sigma^2_u
+# C_r = Var(r | T, S) = TSS'T' sigma^2_u = TDT' sigma^2_u
 #
-# TODO: r and R might be bad letters? (r could be tought of as a residual?)
+# Covariance between node values (n = Nr):
+# 
+# C_n = Var(n | N, T, S) = NTDT'N' sigma^2_u
+#
+# Covariance between genetic values (g = Wr):
+# 
+# C_g = Var(g | W, T, S) = WTDT'W' sigma^2_u
+#  
+# Covariance between phenotypic values (y = Xb + Zg + e):
+# 
+# C_y = Var(y | Z, W, T, S) = ZWTDT'W'Z' sigma^2_u + I sigma^2_e
 # 
 # Some relations:
 #  

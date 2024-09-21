@@ -1,5 +1,5 @@
-# tsblup 
-**tsblup** is a complex trait analysis toolkit based on the `tskit` succinct tree sequence ecosystem.
+# tslmm
+**tslmm** is a complex trait analysis toolkit based on the `tskit` succinct tree sequence ecosystem.
 
 It fits the following linear mixed model:
 
@@ -11,7 +11,7 @@ $$\mathbf{y} = X\mathbf{b} + Z\mathbf{u} + \boldsymbol{\varepsilon}$$
 $\mathbf{u} \sim \mathcal{N}\left(\mathbf{0}, Q_{\mathbf{u}}^{-1}\right)$ where $Q_{\mathbf{u}}$ is the precision matrix.
 - $\boldsymbol{\varepsilon}$ is the non-genetic error terms.
 
-**tsblup** constructs $Z$ and $Q$ using the tree sequence.
+**tslmm** constructs $Z$ and $Q$ using the tree sequence.
 Both are sparse matrices with $O(\text{number of edges})$ non-zero elements that can be stored conveniently.
 See the example below:
 ```

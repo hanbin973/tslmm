@@ -38,7 +38,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 5
+    num_threads = 4
     numba.set_num_threads(num_threads)
     rng = np.random.default_rng(seed=1)
     
@@ -88,6 +88,6 @@ if __name__ == "__main__":
     plt.plot(true_sigma, true_tau, 'xr')
     plt.xlabel("$\\sigma^2$")
     plt.ylabel("$\\tau^2$")
-    plt.title(f"SGD on REML\n{ts.num_individuals} diploids, {lmm.covariance.factor_dim} edges, {covariates.shape[1]} covariates")
+    plt.title(f"SGD on REML\n{ts.num_individuals} diploids, {covariates.shape[1]} covariates")
     plt.savefig("figs/check_gradient_descent_2.png")
     plt.clf()

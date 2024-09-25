@@ -1,1 +1,1 @@
-from tsblup.operations import *  # NOQA
+from tslmm.operations import *  # NOQA

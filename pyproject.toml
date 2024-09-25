@@ -3,13 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tsblup"
+name = "tslmm"
 version = "0.0.1"
 authors = [  # TODO
-    { name="Hanbin Lee", email="something@somewhere.org" },
+    { name="Hanbin Lee", email="hblee@umich.edu" },
     { name="Nate Pope", email="natep@uoregon.edu" },
     { name="Peter Ralph", email="pr@uoregon.edu" },
     { name="Gregor Gorjanc", email="something@somewhere.org" },
+	{ name="Jerome Kelleher", email="something@somewhere.org" },
 ]
 description = "Linear mixed models from ancestral recombination graphs"
 readme = "README.md"
@@ -27,6 +28,6 @@ classifiers = [
 ]
 
 [tool.setuptools]
-packages = ["tsblup"]
+packages = ["tslmm"]
 py-modules = ["__init__"]
 

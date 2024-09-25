@@ -5,9 +5,9 @@ import scipy.sparse
 import numba
 from typing import Callable
 
-from tsblup.trace_estimators import xtrace, hutchinson, xdiag
-from tsblup.operations import split_upwards
-from tsblup.matrices import edge_individual_matrix, edge_adjacency
+from tslmm.trace_estimators import xtrace, hutchinson, xdiag
+from tslmm.operations import split_upwards
+from tslmm.matrices import edge_individual_matrix, edge_adjacency
 
 
 _i1r = numba.types.Array(numba.types.int32, 1, 'C', readonly=True)
@@ -108,39 +108,13 @@ class CovarianceModel:
     where `u ~ N(0, tau L^{-1} L^{-T})` and `e ~ N(0, sigma I)`. 
     Hence, `y ~ N(0, tau Z L^{-1} L^{-T} Z^T + sigma I)`
     """
-
-    @staticmethod
-    @numba.njit(_f2w(_i1r, _i1r, _f1r, _f2r), parallel=True)
-    def backward_solve(Lp, Li, Lx, y):
-        """
-        `L` is lower-triangular Cholesky factor in CSC format: solve `L x = y`.
-        """
-        r, c = y.shape
-        x = y.copy()
-        for i in numba.prange(c):
-            for j in range(0, r):
-                x[j, i] /= Lx[Lp[j]]
-                for p in range(Lp[j] + 1, Lp[j + 1]):
-                    x[Li[p], i] -= Lx[p] * x[j, i]
-        return x
-
-    @staticmethod
-    @numba.njit(_f2w(_i1r, _i1r, _f1r, _f2r), parallel=True)
-    def forward_solve(Lp, Li, Lx, y):
-        """
-        `L` is lower-triangular Cholesky factor in CSC format: solve `L' x = y`.
-        """
-        r, c = y.shape
-        x = y.copy()
-        for i in numba.prange(c):
-            for j in range(r - 1, -1, -1):
-                for p in range(Lp[j] + 1, Lp[j + 1]):
-                    x[j, i] -= Lx[p] * x[Li[p], i]
-                x[j, i] /= Lx[Lp[j]]
-        return x
-
-    def __init__(self, tree_sequence: tskit.TreeSequence, mutation_rate: float = 1.0):
+    """
+    The class either does matvec or solve
+    """
+   
+    def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0):
         # TODO: mean centering around a subset
+        """
         ts = split_upwards(tree_sequence)
         self.dim = ts.num_individuals
         self.factor_dim = ts.num_edges
@@ -151,6 +125,24 @@ class CovarianceModel:
         self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(self.D))
         self.L.sort_indices()
         self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
+        """
+        self.dim = ts.num_individuals
+        self.I_indices = np.arange(self.dim)
+        self.mutation_rate = mutation_rate
+        self.ts = ts
+        self.individual_sample_matrix = scipy.sparse.csr_array(
+                (
+                    np.ones(ts.num_samples),
+                    (
+                        np.repeat(np.arange(ts.num_individuals), 2),
+                        np.arange(ts.num_samples)
+                    )
+                ),
+                shape=(ts.num_individuals, ts.num_samples)
+                )
+        # Q: is this necessary? Is it for dependent residuals?
+        self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
+
 
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
@@ -161,13 +153,22 @@ class CovarianceModel:
         with the submatrix specified by `rows` and `cols`
         """
         is_vector = y.ndim == 1
-        if rows is None: rows = self.I.indices
-        if cols is None: cols = self.I.indices
+        if rows is None: rows = self.I_indices
+        if cols is None: cols = self.I_indices
         if is_vector: y = y.reshape(-1, 1)
+        assert cols.size == y.shape[0], "Dimension mismatch"
+        # ts.genetic_relatedness_vector computes the full GRM
+        # select_index makes a #(selected individuals) * #(all individuals) sparse matrix
+        x = self.individual_sample_matrix.T @ self.index_select(cols).T @ y
+        x = self.ts.genetic_relatedness_vector(W=x, windows=None, mode="branch", span_normalise=True, centre=False)
+        x = self.index_select(rows) @ self.individual_sample_matrix @ x
+        x *= self.mutation_rate
+        """
         x = self.Z[cols].T @ y
         x = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, x)
         x = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, x)
         x = self.Z[rows] @ x
+        """
         x = tau * x + sigma * self.I[rows] @ (self.I[cols].T @ y)
         if is_vector: x = x.squeeze()
         return x
@@ -223,6 +224,10 @@ class CovarianceModel:
         if not success: print("CG did not converge") # DEBUG
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
+    
+    def index_select(self, ind: np.ndarray) -> scipy.sparse.sparray:
+        data, row_ind, col_ind = np.ones(ind.size), np.arange(ind.size), ind
+        return scipy.sparse.csr_array((data, (row_ind, col_ind)), shape=(ind.size, self.dim))
 
 
 class LowRankPreconditioner:

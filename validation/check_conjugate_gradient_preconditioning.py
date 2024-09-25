@@ -8,8 +8,8 @@ import numpy as np
 import msprime
 import scipy
 
-from tsblup.tslmm import tslmm, CovarianceModel, LowRankPreconditioner
-from tsblup.tslmm import _explicit_covariance_matrix
+from tslmm.tslmm import tslmm, CovarianceModel, LowRankPreconditioner
+from tslmm.tslmm import _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
 

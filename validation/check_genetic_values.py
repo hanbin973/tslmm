@@ -8,8 +8,8 @@ import numpy as np
 import msprime
 import scipy
 
-from tsblup.tslmm import tslmm
-from tsblup.tslmm import _explicit_covariance_matrix, _explicit_posterior
+from tslmm.tslmm import tslmm
+from tslmm.tslmm import _explicit_covariance_matrix, _explicit_posterior
 
 import matplotlib.pyplot as plt
 

@@ -8,9 +8,9 @@ import numpy as np
 import msprime
 import scipy
 
-from tsblup.trace_estimators import xtrace
-from tsblup.tslmm import CovarianceModel, LowRankPreconditioner
-from tsblup.tslmm import _explicit_covariance_matrix
+from tslmm.trace_estimators import xtrace
+from tslmm.tslmm import CovarianceModel, LowRankPreconditioner
+from tslmm.tslmm import _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
 

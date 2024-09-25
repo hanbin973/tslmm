@@ -7,8 +7,8 @@ import numpy as np
 import numba
 import msprime
 
-from tsblup.tslmm import tslmm
-from tsblup.tslmm import _explicit_reml, _explicit_covariance_matrix
+from tslmm.tslmm import tslmm
+from tslmm.tslmm import _explicit_reml, _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
 

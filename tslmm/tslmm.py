@@ -461,7 +461,7 @@ class tslmm:
         def _G(test_vectors):
             return covariance(0, 1, test_vectors, rows=indices, cols=indices)
 
-        def _PG(test_vectors): # _G for tr(G)
+        def _PG(test_vectors):
             return _projection(covariance(0, 1, test_vectors, rows=indices, cols=indices))
 
         def _PGPG(test_vectors):
@@ -473,8 +473,8 @@ class tslmm:
         P_trace = dim - covariates.shape[1] # N-P
         
         # yPGPy, yPy 
-        Py = _projection(phenotypes)
-        yPy = np.dot(phenotypes, Py)
+        Py = _projection(y)
+        yPy = np.dot(y, Py)
         GPy = _G(Py)
         yPGPy = np.dot(Py, GPy)
 
@@ -484,11 +484,12 @@ class tslmm:
             [PG_trace, P_trace]
             ])
         b = np.array([yPGPy, yPy])
-        print(a, b)
         state = np.linalg.solve(a, b)
         state *= scale ** 2
+        print(a)
+        print(b)
 
-        return state
+        return state[::-1]
 
     # ------ API ------ #
 

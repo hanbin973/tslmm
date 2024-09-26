@@ -398,7 +398,6 @@ class tslmm:
             starting_values = np.full(2, np.sqrt(ols / 2))
         else:
             starting_values = np.sqrt(starting_values) / scale
-
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = starting_values
         running_mean = state
@@ -433,6 +432,63 @@ class tslmm:
 
         return np.power(running_mean, 2), fixed_effects, residuals
 
+    @staticmethod
+    def _haseman_elston_regression(
+        phenotypes: np.ndarray,
+        covariates: np.ndarray,
+        covariance: CovarianceModel,
+        indices: np.ndarray = None,
+        trace_samples: int = 10,
+        rng: np.random.Generator = None,
+    ):
+        """
+        Haseman-Elston regression for REML initialization
+        """
+        assert trace_samples > 0
+        
+        if rng is None: rng = np.random.default_rng()
+        trace_estimator = hutchinson if trace_samples == 1 else xtrace
+        dim = covariance.dim if indices is None else indices.size
+
+        # scale things so that hyperparameters are easier to default
+        mean, scale = np.mean(phenotypes), np.std(phenotypes)
+        y = (phenotypes - mean) / scale
+        X, R = np.linalg.qr(covariates)
+
+        def _projection(test_vectors):
+            return test_vectors - X @ (X.T @ test_vectors)
+
+        def _G(test_vectors):
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+
+        def _PG(test_vectors): # _G for tr(G)
+            return _projection(covariance(0, 1, test_vectors, rows=indices, cols=indices))
+
+        def _PGPG(test_vectors):
+            return _PG(_PG(test_vectors))
+
+        # tr(PGPG), tr(PG), tr(P)
+        PGPG_trace, _ = trace_estimator(_PGPG, dim, trace_samples,rng=rng)
+        PG_trace, _ = trace_estimator(_PG, dim, trace_samples, rng=rng)
+        P_trace = dim - covariates.shape[1] # N-P
+        
+        # yPGPy, yPy 
+        Py = _projection(phenotypes)
+        yPy = np.dot(phenotypes, Py)
+        GPy = _G(Py)
+        yPGPy = np.dot(Py, GPy)
+
+        # solve
+        a = np.array([
+            [PGPG_trace, PG_trace],
+            [PG_trace, P_trace]
+            ])
+        b = np.array([yPGPy, yPy])
+        print(a, b)
+        state = np.linalg.solve(a, b)
+        state *= scale ** 2
+
+        return state
 
     # ------ API ------ #
 
@@ -451,6 +507,7 @@ class tslmm:
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
         rng: np.random.Generator = None,
+        initialization: str = None,
     ):
         """
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic
@@ -482,6 +539,16 @@ class tslmm:
                 indices=self.phenotyped_individuals,
                 rng=rng,
             )
+        if initialization == "he":
+            variance_components = self._haseman_elston_regression(
+                phenotypes=self.phenotypes,
+                covariates=self.covariates,
+                covariance=self.covariance,
+                indices=self.phenotyped_individuals,
+                trace_samples=sgd_samples,
+                rng=rng,
+            )
+            print(variance_components)
 
         self._optimization_trajectory = []
         self.variance_components, self.fixed_effects, self.residuals = \
@@ -492,7 +559,7 @@ class tslmm:
                 covariance=self.covariance,
                 preconditioner=self.preconditioner,
                 indices=self.phenotyped_individuals,
-                max_iterations=sgd_iterations if variance_components is None else 0,
+                max_iterations=sgd_iterations, # if variance_components is None else 0,
                 trace_samples=sgd_samples,
                 epsilon=sgd_epsilon,
                 decay=sgd_decay,
@@ -527,5 +594,6 @@ class tslmm:
         if variance_samples > 0: V_g = xdiag(_posterior_var, j.size, variance_samples, rng) 
 
         return (E_g, V_g) if variance_samples > 0 else E_g
+    
 
 

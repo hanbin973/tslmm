@@ -6,8 +6,10 @@ import numba
 from typing import Callable
 
 from tslmm.trace_estimators import xtrace, hutchinson, xdiag
+from tslmm.tspca import _rand_svd
 from tslmm.operations import split_upwards
 from tslmm.matrices import edge_individual_matrix, edge_adjacency
+
 
 
 _i1r = numba.types.Array(numba.types.int32, 1, 'C', readonly=True)
@@ -277,6 +279,7 @@ class LowRankPreconditioner:
         self, 
         covariance: CovarianceModel, 
         rank: int, 
+        depth: int = 1,
         indices: np.ndarray = None, 
         num_vectors: int = None, 
         rng: np.random.Generator = None,
@@ -284,13 +287,23 @@ class LowRankPreconditioner:
         if rng is None: rng = np.random.default_rng()
         num_vectors = rank if num_vectors is None else max(rank, num_vectors)
         self.dim = covariance.dim if indices is None else indices.size
-        self.D, self.U = self._rand_eigh(
-            lambda x: covariance(0, 1, x, rows=indices, cols=indices), 
-            operator_dim=self.dim, 
-            rank=rank, 
-            num_vectors=num_vectors, 
-            rng=rng,
-        )
+        if depth > 1:
+            self.U, self.D, _ = _rand_svd(
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices),
+                operator_dim=self.dim,
+                rank=rank,
+                depth=depth,
+                num_vectors=num_vectors,
+                rng=rng,
+            )
+        else:
+            self.D, self.U = self._rand_eigh(
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices), 
+                operator_dim=self.dim, 
+                rank=rank, 
+                num_vectors=num_vectors, 
+                rng=rng,
+            )
 
     def __call__(self, sigma: float, tau: float, y: np.ndarray) -> np.ndarray:
         """
@@ -517,6 +530,7 @@ class tslmm:
         sgd_samples: int = 5,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
+        preconditioner_depth: int = 1,
         rng: np.random.Generator = None,
         initialization: str = None,
     ):
@@ -546,6 +560,7 @@ class tslmm:
             LowRankPreconditioner(
                 self.covariance, 
                 rank=preconditioner_rank, 
+                depth=preconditioner_depth,
                 num_vectors=2 * preconditioner_rank, 
                 indices=self.phenotyped_individuals,
                 rng=rng,

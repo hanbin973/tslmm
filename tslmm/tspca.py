@@ -18,9 +18,9 @@ def _rand_pow_range_finder(
     test_vectors = rng.normal(size=(operator_dim, num_vectors))
     Q = test_vectors
     for i in range(depth):
-        Q, _ = np.linalg.qr(Q)
+        Q = np.linalg.qr(Q).Q
         Q = operator(Q)
-    Q, _ = np.linalg.qr(Q)
+    Q = np.linalg.qr(Q).Q
     return Q[:, :rank]
 
 def _rand_svd(
@@ -38,7 +38,7 @@ def _rand_svd(
     Q = _rand_pow_range_finder(
             operator,
             operator_dim,
-            rank,
+            num_vectors,
             depth,
             num_vectors,
             rng

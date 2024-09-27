@@ -102,6 +102,48 @@ def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=N
 
 # --- linear operators --- #
 
+def genetic_relatedness_vector(
+        ts: tskit.Treesequence,
+        mat: np.ndarray,
+        rows: np.ndarray,
+        cols: np.ndarray,
+        centre: bool = False,
+        windows = None,
+        ):
+    
+    # maps samples to individuals
+    def sample_individual_sparray(ts: tskit.TreeSequence) -> scipy.sparse.sparray:
+        samples_individual = ts.nodes_individual[ts.samples()]
+        return scipy.sparse.csr_array(
+                (
+                    np.ones(ts.num_samples),
+                    (np.arange(ts.num_samples), samples_individual)
+                ),
+                shape=(ts.num_samples, ts.num_individuals)
+            )
+    
+    # maps values in idx to num_individuals
+    def individual_idx_sparray(n: int, idx: np.ndarray) -> scipy.sparse.sparray:
+        return scipy.sparse.csr_array(
+                (
+                    np.ones(idx.size),
+                    (idx, np.arange(idx.size))
+                ),
+                shape=(n, idx.size)
+            )
+                        
+    assert cols.size == mat.shape[0], "Dimension mismatch"
+    # centering
+    x = mat - mat.mean(axis=0) if centre else mat
+    x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
+    x = sample_individual_sparray(ts).dot(x)
+    x = ts.genetic_relatedness_vector(W=x, windows=windows, mode="branch", centre=False)
+    x = sample_individual_sparray(ts).T.dot(x)
+    x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
+    x = x - x.mean(axis=0) if centre else x
+
+    return x
+
 class CovarianceModel:
     """
     Covariance between phenotypes `y = Z u + e` 
@@ -130,23 +172,12 @@ class CovarianceModel:
         self.I_indices = np.arange(self.dim)
         self.mutation_rate = mutation_rate
         self.ts = ts
-        self.individual_sample_matrix = scipy.sparse.csr_array(
-                (
-                    np.ones(ts.num_samples),
-                    (
-                        ts.nodes_individual[ts.samples()], 
-                        np.arange(ts.num_samples)
-                    )
-                ),
-                shape=(ts.num_individuals, ts.num_samples)
-                )
-        # Q: is this necessary? Is it for dependent residuals?
         self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
-
 
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
+        centre: bool = False,
     ) -> np.ndarray:
         r"""
         Matrix-vector product, `(Z (L L')^{-1} Z' \tau^2 + I \sigma^2) y`, optionally
@@ -157,18 +188,9 @@ class CovarianceModel:
         if cols is None: cols = self.I_indices
         if is_vector: y = y.reshape(-1, 1)
         assert cols.size == y.shape[0], "Dimension mismatch"
-        # ts.genetic_relatedness_vector computes the full GRM
-        # select_index makes a #(selected individuals) * #(all individuals) sparse matrix
-        x = self.individual_sample_matrix.T @ (self.index_select(cols).T @ y)
-        x = self.ts.genetic_relatedness_vector(W=x, windows=None, mode="branch", span_normalise=True, centre=False)
-        x = self.index_select(rows) @ (self.individual_sample_matrix @ x)
+        
+        x = genetic_relatedness_vector(self.ts, y, rows, cols, centre) 
         x *= self.mutation_rate
-        """
-        x = self.Z[cols].T @ y
-        x = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, x)
-        x = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, x)
-        x = self.Z[rows] @ x
-        """
         x = tau * x + sigma * self.I[rows] @ (self.I[cols].T @ y)
         if is_vector: x = x.squeeze()
         return x
@@ -224,11 +246,15 @@ class CovarianceModel:
         if not success: print("CG did not converge") # DEBUG
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
-    
-    def index_select(self, ind: np.ndarray) -> scipy.sparse.sparray:
-        data, row_ind, col_ind = np.ones(ind.size), np.arange(ind.size), ind
-        return scipy.sparse.csr_array((data, (row_ind, col_ind)), shape=(ind.size, self.dim))
-
+     
+    def expand_to_dim(self, x: np.ndarray, ind: np.ndarray) -> np.ndarray:
+        assert ind.size == x.shape[0]
+        data = np.ones(ind.size)
+        row_ind, col_ind = ind, np.arange(ind.size) 
+        return scipy.sparse.csr_array(
+            (data, (row_ind, col_ind)),
+            shape=(self.dim, ind.size)
+        ).dot(x)
 
 class LowRankPreconditioner:
     """

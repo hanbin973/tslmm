@@ -156,18 +156,6 @@ class CovarianceModel:
    
     def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0):
         # TODO: mean centering around a subset
-        """
-        ts = split_upwards(tree_sequence)
-        self.dim = ts.num_individuals
-        self.factor_dim = ts.num_edges
-        self.D = mutation_rate * (ts.edges_right - ts.edges_left) * \
-            (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
-        self.Z = edge_individual_matrix(ts).T.tocsr()
-        self.L = scipy.sparse.identity(ts.num_edges) - edge_adjacency(ts).T
-        self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(self.D))
-        self.L.sort_indices()
-        self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
-        """
         self.dim = ts.num_individuals
         self.I_indices = np.arange(self.dim)
         self.mutation_rate = mutation_rate

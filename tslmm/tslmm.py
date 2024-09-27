@@ -485,10 +485,10 @@ class tslmm:
             return test_vectors - X @ (X.T @ test_vectors)
 
         def _G(test_vectors):
-            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=True)
 
         def _PG(test_vectors):
-            return _projection(covariance(0, 1, test_vectors, rows=indices, cols=indices))
+            return _projection(_G(test_vectors))
 
         def _PGPG(test_vectors):
             return _PG(_PG(test_vectors))

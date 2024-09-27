@@ -27,7 +27,7 @@ def simulate(sigma, tau, tree_sequence, mutation_rate, rng=None, subset=None, ce
     X = rng.normal(size=(tree_sequence.num_individuals, 5))
     g = U @ rng.normal(size=tree_sequence.num_individuals)
     e = rng.normal(size=tree_sequence.num_individuals) * np.sqrt(sigma)
-    b = rng.normal(size=5)
+    b = rng.normal(size=X.shape[1])
     y = X @ b + g + e
     return y, X
 
@@ -63,15 +63,10 @@ if __name__ == "__main__":
     mu = 1e-10
     traits, covariates = simulate(*varcov, ts, mu, rng=rng)
     
-    """
     lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng)
     trajectory = lmm._optimization_trajectory
-    """
     lmm_he = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization='he')
     trajectory_he = lmm_he._optimization_trajectory
-    print(trajectory_he)
-
-
 
     """
     # calculate exact objective over grid (this is painfully slow, TODO make a faster pre-factorized explicit version)
@@ -94,12 +89,10 @@ if __name__ == "__main__":
     cbar = plt.colorbar(mesh)
     cbar.set_label("REML")
     """
-    """
     for (xm, ym), (x, y) in zip(trajectory[:-1], trajectory[1:]):
         plt.plot((xm, x), (ym, y), '-b')
-    """
     for (xm, ym), (x, y) in zip(trajectory_he[:-1], trajectory_he[1:]):
-        plt.plot((xm, x), (ym, y), '-b')
+        plt.plot((xm, x), (ym, y), '-r')
     plt.plot(true_sigma, true_tau, 'xr')
     plt.xlabel("$\\sigma^2$")
     plt.ylabel("$\\tau^2$")

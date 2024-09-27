@@ -134,7 +134,7 @@ class CovarianceModel:
                 (
                     np.ones(ts.num_samples),
                     (
-                        np.repeat(np.arange(ts.num_individuals), 2),
+                        ts.nodes_individual[ts.samples()], 
                         np.arange(ts.num_samples)
                     )
                 ),
@@ -159,9 +159,9 @@ class CovarianceModel:
         assert cols.size == y.shape[0], "Dimension mismatch"
         # ts.genetic_relatedness_vector computes the full GRM
         # select_index makes a #(selected individuals) * #(all individuals) sparse matrix
-        x = self.individual_sample_matrix.T @ self.index_select(cols).T @ y
+        x = self.individual_sample_matrix.T @ (self.index_select(cols).T @ y)
         x = self.ts.genetic_relatedness_vector(W=x, windows=None, mode="branch", span_normalise=True, centre=False)
-        x = self.index_select(rows) @ self.individual_sample_matrix @ x
+        x = self.index_select(rows) @ (self.individual_sample_matrix @ x)
         x *= self.mutation_rate
         """
         x = self.Z[cols].T @ y
@@ -451,8 +451,7 @@ class tslmm:
         dim = covariance.dim if indices is None else indices.size
 
         # scale things so that hyperparameters are easier to default
-        mean, scale = np.mean(phenotypes), np.std(phenotypes)
-        y = (phenotypes - mean) / scale
+        y = phenotypes - np.mean(phenotypes)
         X, R = np.linalg.qr(covariates)
 
         def _projection(test_vectors):
@@ -480,15 +479,12 @@ class tslmm:
 
         # solve
         a = np.array([
-            [PGPG_trace, PG_trace],
-            [PG_trace, P_trace]
-            ])
+                [PGPG_trace, PG_trace],
+                [PG_trace, P_trace]
+             ])
         b = np.array([yPGPy, yPy])
         state = np.linalg.solve(a, b)
-        state *= scale ** 2
-        print(a)
-        print(b)
-
+    
         return state[::-1]
 
     # ------ API ------ #

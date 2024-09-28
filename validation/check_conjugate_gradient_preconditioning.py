@@ -39,7 +39,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 5
+    num_threads = 4
     numba.set_num_threads(num_threads)
     rng = np.random.default_rng(seed=1)
     

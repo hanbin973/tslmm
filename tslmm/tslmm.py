@@ -390,6 +390,77 @@ class tslmm:
         gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
         return gradient, fixed_effects, residuals
 
+    @staticmethod
+    def _reml_stochastic_optimize_log(
+        starting_values: np.ndarray,
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel,
+        preconditioner: LowRankPreconditioner,
+        indices: np.ndarray = None,
+        trace_samples: int = 10, 
+        decay: float = 0.1, 
+        epsilon: float = 1e-4, 
+        min_value: float = 1e-4,
+        max_iterations: int = 100,
+        verbose: bool = True,
+        callback: Callable = None,
+        rng: np.random.Generator = None, 
+    ):
+        """
+        Set `max_iterations` to zero to skip optimization
+        """
+        if rng is None: rng = np.random.default_rng()
+
+        # scale things so that hyperparameters are easier to default
+        mean, scale = np.mean(phenotypes), np.std(phenotypes)
+        y = (phenotypes - mean) / scale
+        X, R = np.linalg.qr(covariates)
+
+        # TODO: use better starting values, like HE regression
+        if starting_values is None:
+            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
+            ols = np.var(y - ols, ddof=covariates.shape[1])
+            starting_values = np.full(2, np.sqrt(ols / 2))
+        else:
+            starting_values = np.sqrt(starting_values) / scale
+        # AdaDelta (https://arxiv.org/pdf/1212.5701)
+        # optimize in log-space
+        state = np.log(starting_values)
+        running_mean = state
+        numerator = np.zeros(state.size)
+        denominator = np.zeros(state.size)
+        for itt in range(max_iterations):
+            # state = np.clip(state, min_value, np.inf)  # force positive, not needed cus we're in log space
+            gradient, _, _ = tslmm._reml_stochastic_gradient(
+                *np.exp(state), y, X, covariance, preconditioner, 
+                trace_samples=trace_samples, indices=indices, rng=rng,
+            )
+            gradient *= np.exp(state) # chain rule, we're in logspace
+            # state += epsilon * gradient  # usual SGD update
+            denominator = (1 - decay) * denominator + decay * gradient ** 2
+            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
+            numerator = (1 - decay) * numerator + decay * update ** 2
+            state = state + update
+            running_mean = (1 - decay) * running_mean + decay * state
+            #if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
+            if verbose: print(f"Iteration {itt}: {(np.power(scale, 2) * np.exp(running_mean)).round(2)}")
+            #if callback is not None: callback(np.power(scale * running_mean, 2))
+            if callback is not None: callback((np.power(scale, 2) * np.exp(running_mean)))
+            # TODO: stopping condition based on change in running mean
+            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
+
+        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
+            *np.exp(running_mean), y, X, covariance, preconditioner, 
+            trace_samples=trace_samples, indices=indices, rng=rng
+        )
+        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
+        #running_mean *= scale
+        residuals *= scale
+        residuals += mean
+
+        return np.power(scale, 2) * np.exp(running_mean), fixed_effects, residuals
+
 
     @staticmethod
     def _reml_stochastic_optimize(
@@ -526,7 +597,7 @@ class tslmm:
         variance_components: np.ndarray = None,
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
-        sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
+        sgd_epsilon: float = 1e-2,  # if this is too large SGD will diverge # log space tolerates higher step size
         sgd_samples: int = 5,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
@@ -578,7 +649,7 @@ class tslmm:
 
         self._optimization_trajectory = []
         self.variance_components, self.fixed_effects, self.residuals = \
-            self._reml_stochastic_optimize(
+            self._reml_stochastic_optimize_log( # remove _log to rollback
                 starting_values=variance_components,
                 phenotypes=self.phenotypes,
                 covariates=self.covariates,

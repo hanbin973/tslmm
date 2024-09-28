@@ -5,9 +5,11 @@ import scipy.sparse
 import numba
 from typing import Callable
 
-from tsblup.trace_estimators import xtrace, hutchinson, xdiag
-from tsblup.operations import split_upwards
-from tsblup.matrices import edge_individual_matrix, edge_adjacency
+from tslmm.trace_estimators import xtrace, hutchinson, xdiag
+from tslmm.tspca import _rand_svd
+from tslmm.operations import split_upwards
+from tslmm.matrices import edge_individual_matrix, edge_adjacency
+
 
 
 _i1r = numba.types.Array(numba.types.int32, 1, 'C', readonly=True)
@@ -102,72 +104,83 @@ def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=N
 
 # --- linear operators --- #
 
+def genetic_relatedness_vector(
+        ts: tskit.Treesequence,
+        mat: np.ndarray,
+        rows: np.ndarray,
+        cols: np.ndarray,
+        centre: bool = False,
+        windows = None,
+        ):
+    
+    # maps samples to individuals
+    def sample_individual_sparray(ts: tskit.TreeSequence) -> scipy.sparse.sparray:
+        samples_individual = ts.nodes_individual[ts.samples()]
+        return scipy.sparse.csr_array(
+                (
+                    np.ones(ts.num_samples),
+                    (np.arange(ts.num_samples), samples_individual)
+                ),
+                shape=(ts.num_samples, ts.num_individuals)
+            )
+    
+    # maps values in idx to num_individuals
+    def individual_idx_sparray(n: int, idx: np.ndarray) -> scipy.sparse.sparray:
+        return scipy.sparse.csr_array(
+                (
+                    np.ones(idx.size),
+                    (idx, np.arange(idx.size))
+                ),
+                shape=(n, idx.size)
+            )
+                        
+    assert cols.size == mat.shape[0], "Dimension mismatch"
+    # centering
+    x = mat - mat.mean(axis=0) if centre else mat
+    x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
+    x = sample_individual_sparray(ts).dot(x)
+    x = ts.genetic_relatedness_vector(W=x, windows=windows, mode="branch", centre=False)
+    x = sample_individual_sparray(ts).T.dot(x)
+    x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
+    x = x - x.mean(axis=0) if centre else x
+
+    return x
+
 class CovarianceModel:
     """
     Covariance between phenotypes `y = Z u + e` 
     where `u ~ N(0, tau L^{-1} L^{-T})` and `e ~ N(0, sigma I)`. 
     Hence, `y ~ N(0, tau Z L^{-1} L^{-T} Z^T + sigma I)`
     """
-
-    @staticmethod
-    @numba.njit(_f2w(_i1r, _i1r, _f1r, _f2r), parallel=True)
-    def backward_solve(Lp, Li, Lx, y):
-        """
-        `L` is lower-triangular Cholesky factor in CSC format: solve `L x = y`.
-        """
-        r, c = y.shape
-        x = y.copy()
-        for i in numba.prange(c):
-            for j in range(0, r):
-                x[j, i] /= Lx[Lp[j]]
-                for p in range(Lp[j] + 1, Lp[j + 1]):
-                    x[Li[p], i] -= Lx[p] * x[j, i]
-        return x
-
-    @staticmethod
-    @numba.njit(_f2w(_i1r, _i1r, _f1r, _f2r), parallel=True)
-    def forward_solve(Lp, Li, Lx, y):
-        """
-        `L` is lower-triangular Cholesky factor in CSC format: solve `L' x = y`.
-        """
-        r, c = y.shape
-        x = y.copy()
-        for i in numba.prange(c):
-            for j in range(r - 1, -1, -1):
-                for p in range(Lp[j] + 1, Lp[j + 1]):
-                    x[j, i] -= Lx[p] * x[Li[p], i]
-                x[j, i] /= Lx[Lp[j]]
-        return x
-
-    def __init__(self, tree_sequence: tskit.TreeSequence, mutation_rate: float = 1.0):
+    """
+    The class either does matvec or solve
+    """
+   
+    def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0):
         # TODO: mean centering around a subset
-        ts = split_upwards(tree_sequence)
         self.dim = ts.num_individuals
-        self.factor_dim = ts.num_edges
-        self.D = mutation_rate * (ts.edges_right - ts.edges_left) * \
-            (ts.nodes_time[ts.edges_parent] - ts.nodes_time[ts.edges_child])
-        self.Z = edge_individual_matrix(ts).T.tocsr()
-        self.L = scipy.sparse.identity(ts.num_edges) - edge_adjacency(ts).T
-        self.L = self.L.T @ scipy.sparse.diags_array(1 / np.sqrt(self.D))
-        self.L.sort_indices()
+        self.I_indices = np.arange(self.dim)
+        self.mutation_rate = mutation_rate
+        self.ts = ts
         self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
 
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
+        centre: bool = False,
     ) -> np.ndarray:
         r"""
         Matrix-vector product, `(Z (L L')^{-1} Z' \tau^2 + I \sigma^2) y`, optionally
         with the submatrix specified by `rows` and `cols`
         """
         is_vector = y.ndim == 1
-        if rows is None: rows = self.I.indices
-        if cols is None: cols = self.I.indices
+        if rows is None: rows = self.I_indices
+        if cols is None: cols = self.I_indices
         if is_vector: y = y.reshape(-1, 1)
-        x = self.Z[cols].T @ y
-        x = self.backward_solve(self.L.indptr, self.L.indices, self.L.data, x)
-        x = self.forward_solve(self.L.indptr, self.L.indices, self.L.data, x)
-        x = self.Z[rows] @ x
+        assert cols.size == y.shape[0], "Dimension mismatch"
+        
+        x = genetic_relatedness_vector(self.ts, y, rows, cols, centre) 
+        x *= self.mutation_rate
         x = tau * x + sigma * self.I[rows] @ (self.I[cols].T @ y)
         if is_vector: x = x.squeeze()
         return x
@@ -223,7 +236,15 @@ class CovarianceModel:
         if not success: print("CG did not converge") # DEBUG
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
-
+     
+    def expand_to_dim(self, x: np.ndarray, ind: np.ndarray) -> np.ndarray:
+        assert ind.size == x.shape[0]
+        data = np.ones(ind.size)
+        row_ind, col_ind = ind, np.arange(ind.size) 
+        return scipy.sparse.csr_array(
+            (data, (row_ind, col_ind)),
+            shape=(self.dim, ind.size)
+        ).dot(x)
 
 class LowRankPreconditioner:
     """
@@ -258,6 +279,7 @@ class LowRankPreconditioner:
         self, 
         covariance: CovarianceModel, 
         rank: int, 
+        depth: int = 1,
         indices: np.ndarray = None, 
         num_vectors: int = None, 
         rng: np.random.Generator = None,
@@ -265,13 +287,23 @@ class LowRankPreconditioner:
         if rng is None: rng = np.random.default_rng()
         num_vectors = rank if num_vectors is None else max(rank, num_vectors)
         self.dim = covariance.dim if indices is None else indices.size
-        self.D, self.U = self._rand_eigh(
-            lambda x: covariance(0, 1, x, rows=indices, cols=indices), 
-            operator_dim=self.dim, 
-            rank=rank, 
-            num_vectors=num_vectors, 
-            rng=rng,
-        )
+        if depth > 1:
+            self.U, self.D, _ = _rand_svd(
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices),
+                operator_dim=self.dim,
+                rank=rank,
+                depth=depth,
+                num_vectors=num_vectors,
+                rng=rng,
+            )
+        else:
+            self.D, self.U = self._rand_eigh(
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices), 
+                operator_dim=self.dim, 
+                rank=rank, 
+                num_vectors=num_vectors, 
+                rng=rng,
+            )
 
     def __call__(self, sigma: float, tau: float, y: np.ndarray) -> np.ndarray:
         """
@@ -358,6 +390,77 @@ class tslmm:
         gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
         return gradient, fixed_effects, residuals
 
+    @staticmethod
+    def _reml_stochastic_optimize_log(
+        starting_values: np.ndarray,
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel,
+        preconditioner: LowRankPreconditioner,
+        indices: np.ndarray = None,
+        trace_samples: int = 10, 
+        decay: float = 0.1, 
+        epsilon: float = 1e-4, 
+        min_value: float = 1e-4,
+        max_iterations: int = 100,
+        verbose: bool = True,
+        callback: Callable = None,
+        rng: np.random.Generator = None, 
+    ):
+        """
+        Set `max_iterations` to zero to skip optimization
+        """
+        if rng is None: rng = np.random.default_rng()
+
+        # scale things so that hyperparameters are easier to default
+        mean, scale = np.mean(phenotypes), np.std(phenotypes)
+        y = (phenotypes - mean) / scale
+        X, R = np.linalg.qr(covariates)
+
+        # TODO: use better starting values, like HE regression
+        if starting_values is None:
+            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
+            ols = np.var(y - ols, ddof=covariates.shape[1])
+            starting_values = np.full(2, np.sqrt(ols / 2))
+        else:
+            starting_values = np.sqrt(starting_values) / scale
+        # AdaDelta (https://arxiv.org/pdf/1212.5701)
+        # optimize in log-space
+        state = np.log(starting_values)
+        running_mean = state
+        numerator = np.zeros(state.size)
+        denominator = np.zeros(state.size)
+        for itt in range(max_iterations):
+            # state = np.clip(state, min_value, np.inf)  # force positive, not needed cus we're in log space
+            gradient, _, _ = tslmm._reml_stochastic_gradient(
+                *np.exp(state), y, X, covariance, preconditioner, 
+                trace_samples=trace_samples, indices=indices, rng=rng,
+            )
+            gradient *= np.exp(state) # chain rule, we're in logspace
+            # state += epsilon * gradient  # usual SGD update
+            denominator = (1 - decay) * denominator + decay * gradient ** 2
+            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
+            numerator = (1 - decay) * numerator + decay * update ** 2
+            state = state + update
+            running_mean = (1 - decay) * running_mean + decay * state
+            #if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
+            if verbose: print(f"Iteration {itt}: {(np.power(scale, 2) * np.exp(running_mean)).round(2)}")
+            #if callback is not None: callback(np.power(scale * running_mean, 2))
+            if callback is not None: callback((np.power(scale, 2) * np.exp(running_mean)))
+            # TODO: stopping condition based on change in running mean
+            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
+
+        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
+            *np.exp(running_mean), y, X, covariance, preconditioner, 
+            trace_samples=trace_samples, indices=indices, rng=rng
+        )
+        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
+        #running_mean *= scale
+        residuals *= scale
+        residuals += mean
+
+        return np.power(scale, 2) * np.exp(running_mean), fixed_effects, residuals
+
 
     @staticmethod
     def _reml_stochastic_optimize(
@@ -393,7 +496,6 @@ class tslmm:
             starting_values = np.full(2, np.sqrt(ols / 2))
         else:
             starting_values = np.sqrt(starting_values) / scale
-
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = starting_values
         running_mean = state
@@ -428,6 +530,60 @@ class tslmm:
 
         return np.power(running_mean, 2), fixed_effects, residuals
 
+    @staticmethod
+    def _haseman_elston_regression(
+        phenotypes: np.ndarray,
+        covariates: np.ndarray,
+        covariance: CovarianceModel,
+        indices: np.ndarray = None,
+        trace_samples: int = 10,
+        rng: np.random.Generator = None,
+    ):
+        """
+        Haseman-Elston regression for REML initialization
+        """
+        assert trace_samples > 0
+        
+        if rng is None: rng = np.random.default_rng()
+        trace_estimator = hutchinson if trace_samples == 1 else xtrace
+        dim = covariance.dim if indices is None else indices.size
+
+        # scale things so that hyperparameters are easier to default
+        y = phenotypes - np.mean(phenotypes)
+        X, R = np.linalg.qr(covariates)
+
+        def _projection(test_vectors):
+            return test_vectors - X @ (X.T @ test_vectors)
+
+        def _G(test_vectors):
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=True)
+
+        def _PG(test_vectors):
+            return _projection(_G(test_vectors))
+
+        def _PGPG(test_vectors):
+            return _PG(_PG(test_vectors))
+
+        # tr(PGPG), tr(PG), tr(P)
+        PGPG_trace, _ = trace_estimator(_PGPG, dim, trace_samples,rng=rng)
+        PG_trace, _ = trace_estimator(_PG, dim, trace_samples, rng=rng)
+        P_trace = dim - covariates.shape[1] # N-P
+        
+        # yPGPy, yPy 
+        Py = _projection(y)
+        yPy = np.dot(y, Py)
+        GPy = _G(Py)
+        yPGPy = np.dot(Py, GPy)
+
+        # solve
+        a = np.array([
+                [PGPG_trace, PG_trace],
+                [PG_trace, P_trace]
+             ])
+        b = np.array([yPGPy, yPy])
+        state = np.linalg.solve(a, b)
+    
+        return state[::-1]
 
     # ------ API ------ #
 
@@ -441,11 +597,13 @@ class tslmm:
         variance_components: np.ndarray = None,
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
-        sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
+        sgd_epsilon: float = 1e-2,  # if this is too large SGD will diverge # log space tolerates higher step size
         sgd_samples: int = 5,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
+        preconditioner_depth: int = 1,
         rng: np.random.Generator = None,
+        initialization: str = None,
     ):
         """
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic
@@ -473,21 +631,32 @@ class tslmm:
             LowRankPreconditioner(
                 self.covariance, 
                 rank=preconditioner_rank, 
+                depth=preconditioner_depth,
                 num_vectors=2 * preconditioner_rank, 
                 indices=self.phenotyped_individuals,
                 rng=rng,
             )
+        if initialization == "he":
+            variance_components = self._haseman_elston_regression(
+                phenotypes=self.phenotypes,
+                covariates=self.covariates,
+                covariance=self.covariance,
+                indices=self.phenotyped_individuals,
+                trace_samples=sgd_samples,
+                rng=rng,
+            )
+            print(variance_components)
 
         self._optimization_trajectory = []
         self.variance_components, self.fixed_effects, self.residuals = \
-            self._reml_stochastic_optimize(
+            self._reml_stochastic_optimize_log( # remove _log to rollback
                 starting_values=variance_components,
                 phenotypes=self.phenotypes,
                 covariates=self.covariates,
                 covariance=self.covariance,
                 preconditioner=self.preconditioner,
                 indices=self.phenotyped_individuals,
-                max_iterations=sgd_iterations if variance_components is None else 0,
+                max_iterations=sgd_iterations, # if variance_components is None else 0,
                 trace_samples=sgd_samples,
                 epsilon=sgd_epsilon,
                 decay=sgd_decay,
@@ -522,5 +691,6 @@ class tslmm:
         if variance_samples > 0: V_g = xdiag(_posterior_var, j.size, variance_samples, rng) 
 
         return (E_g, V_g) if variance_samples > 0 else E_g
+    
 
 

@@ -8,8 +8,8 @@ import numpy as np
 import msprime
 import scipy
 
-from tsblup.tslmm import tslmm, CovarianceModel, LowRankPreconditioner
-from tsblup.tslmm import _explicit_covariance_matrix
+from tslmm.tslmm import tslmm, CovarianceModel, LowRankPreconditioner
+from tslmm.tslmm import _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 5
+    num_threads = 4
     numba.set_num_threads(num_threads)
     rng = np.random.default_rng(seed=1)
     

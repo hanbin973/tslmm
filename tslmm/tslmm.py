@@ -626,7 +626,7 @@ class tslmm:
         self.phenotyped_individuals = phenotyped_individuals
         self.covariates = covariates
         self.phenotypes = phenotypes
-        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
+        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate, centre=True)
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 
@@ -645,7 +645,6 @@ class tslmm:
                 trace_samples=sgd_samples,
                 rng=rng,
             )
-            print(variance_components)
 
         self._optimization_trajectory = []
         self.variance_components, self.fixed_effects, self.residuals = \

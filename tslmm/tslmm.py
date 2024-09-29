@@ -106,12 +106,25 @@ def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=N
 
 def genetic_relatedness_vector(
         ts: tskit.Treesequence,
-        mat: np.ndarray,
+        arr: np.ndarray,
         rows: np.ndarray,
         cols: np.ndarray,
         centre: bool = False,
         windows = None,
-        ):
+        ) -> np.ndarray:
+    """
+    Wrapper around `tskit.TreeSequence.genetic_relatedness_vector` to support centering in respect to individuals.
+    Multiplies an array to the genetic relatedness matrix of :class:`tskit.TreeSequence`.
+
+    :param tskit.TreeSequence ts: A tree sequence.
+    :param numpy.ndarray arr: The array to multiply. Either a vector or a matrix.
+    :param numpy.ndarray rows: Index of rows of the genetic relatedness matrix to be selected.
+    :param numpy.ndarray cols: Index of cols of the genetic relatedness matrix to be selected. The size should match the row length of `arr`.
+    :param bool centre: Centre the genetic relatedness matrix. Centering happens respect to the `rows` and `cols`. 
+    :param windows: An increasing list of breakpoints between the windows to compute the genetic relatedness matrix in.
+    :return: An array that is the matrix-array product of the genetic relatedness matrix and the array. 
+    :rtype: `np.ndarray`
+    """
     
     # maps samples to individuals
     def sample_individual_sparray(ts: tskit.TreeSequence) -> scipy.sparse.sparray:
@@ -134,28 +147,29 @@ def genetic_relatedness_vector(
                 shape=(n, idx.size)
             )
                         
-    assert cols.size == mat.shape[0], "Dimension mismatch"
+    assert cols.size == arr.shape[0], "Dimension mismatch"
     # centering
-    x = mat - mat.mean(axis=0) if centre else mat
+    x = arr - arr.mean(axis=0) if centre else arr # centering within index in rows
     x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
     x = sample_individual_sparray(ts).dot(x)
     x = ts.genetic_relatedness_vector(W=x, windows=windows, mode="branch", centre=False)
     x = sample_individual_sparray(ts).T.dot(x)
     x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
-    x = x - x.mean(axis=0) if centre else x
+    x = x - x.mean(axis=0) if centre else x # centering within index in cols
 
     return x
 
 class CovarianceModel:
     """
-    Covariance between phenotypes `y = Z u + e` 
-    where `u ~ N(0, tau L^{-1} L^{-T})` and `e ~ N(0, sigma I)`. 
-    Hence, `y ~ N(0, tau Z L^{-1} L^{-T} Z^T + sigma I)`
+    The covariance matrix between phenotypes `y = Z u + e`
+    where `u ~ N(0, tau G) and e ~ N(0, sigma I)`.
+    The matrix is defined implicitly as a matrix (or its inverse) - array product.
+    The inverse is computed by conjugate gradient.
+
+    :param tskit.TreeSequence ts: A tree sequence.
+    :param float mutation_rate: Mutation rate. 
     """
-    """
-    The class either does matvec or solve
-    """
-   
+       
     def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0):
         # TODO: mean centering around a subset
         self.dim = ts.num_individuals
@@ -167,11 +181,19 @@ class CovarianceModel:
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
-        centre: bool = True,
+        centre: bool = False,
     ) -> np.ndarray:
         r"""
-        Matrix-vector product, `(Z (L L')^{-1} Z' \tau^2 + I \sigma^2) y`, optionally
-        with the submatrix specified by `rows` and `cols`
+        Multiplies the covariance matrix to an array.
+
+        :param float sigma: Parameter in `sigma I`. It is proportional to the non-genetic variance.
+        :param float tau: Parameter in `tau G`. It is proportional to the genetic (mutational) variance.
+        :param np.ndarray y: Array to be multiplied to the GRM from the right.
+        :param numpy.ndarray rows: Index of rows of the genetic relatedness matrix to be selected.
+        :param numpy.ndarray cols: Index of cols of the genetic relatedness matrix to be selected. The size should match the row length of `arr`.
+        :param bool centre: Centre the genetic relatedness matrix. Centering happens respect to the `rows` and `cols`. 
+        :return: Product of the covariance matrix and the array.
+        :rtype: np.ndarray
         """
         is_vector = y.ndim == 1
         if rows is None: rows = self.I_indices
@@ -198,12 +220,19 @@ class CovarianceModel:
         return_info: bool = False,
     ) -> (np.ndarray, int, bool):
         r"""
-        Matrix-vector product with inverse, `(Z' (L L')^{-1} Z \tau^2 + I \sigma^2)^{-1} y`,
-        optionally inverts the submatrix indexed by `indices`
-        
-        Re-implemented CG to parallelize with multiple rhs, adapted from:
+        Multiplies the inverse of the covariance matrix to an array.
+        The conjugate-gradient algorithm was adopted from:
         https://github.com/scipy/scipy/blob/v1.14.1/scipy/sparse/linalg/_isolve/iterative.py#L283-L388
+
+        :param float sigma: Parameter in `sigma I`. It is proportional to the non-genetic variance.
+        :param float tau: Parameter in `tau G`. It is proportional to the genetic (mutational) variance.
+        :param np.ndarray y: Array to be multiplied to the GRM from the right.
+        :param preconditioner: A Low-rank matrix that approximates the covariance matrix. Randomized Nystrome low-rank preconditioner is used by default.
+        :param indices: The row and the col indices to subset from the covariance matrix.
+        :return: Product of the inverse of the covariance matrix and the array.
+        :rtype: np.ndarray
         """
+
         is_vector = y.ndim == 1
         dim = self.dim if indices is None else indices.size
         assert y.shape[0] == dim
@@ -250,6 +279,13 @@ class LowRankPreconditioner:
     """
     Randomized approximation to the inverse of `CovarianceModel` with scaled
     eigenvalues
+
+    :param Callable covariance: The covariance matrix in which the preconditioner approximates.
+    :param int rank: The rank of the preconditioner.
+    :param int depth: The number of power iterations used in range finder.
+    :param np.ndarray indices: The row and the col indices to subset from the covariance matrix.
+    :param int num_vectors: The number of test vectors to use. It should be larger than the rank.
+    :param np.random.Generator rng: Random number generator.
     """
 
     @staticmethod
@@ -263,7 +299,7 @@ class LowRankPreconditioner:
         """
         Algorithm 16 in https://arxiv.org/pdf/2002.01387
         """
-        assert num_vectors >= rank > 0
+        assert num_vectors >= rank > 0, "More test vecotrs needed than rank"
         test_vectors = rng.normal(size=(operator_dim, num_vectors))
         test_vectors = np.linalg.qr(test_vectors).Q  # orthonormalise
         proj_vectors = operator(test_vectors)
@@ -307,7 +343,13 @@ class LowRankPreconditioner:
 
     def __call__(self, sigma: float, tau: float, y: np.ndarray) -> np.ndarray:
         """
-        Inverse-vector product: section 17.2 in https://arxiv.org/pdf/2002.01387
+        The product of the preconditioner, which is a low-rank approximate inverse,
+        and the vector.
+        See section 17.2 in https://arxiv.org/pdf/2002.01387.
+
+        :param float sigma: Parameter in `sigma I`. It is proportional to the non-genetic variance.
+        :param float tau: Parameter in `tau G`. It is proportional to the genetic (mutational) variance.
+        :param np.ndarray y: Array to be multiplied to the preconditioner from the right.
         """
         is_vector = y.ndim == 1
         if is_vector: y = y.reshape(-1, 1)
@@ -319,6 +361,18 @@ class LowRankPreconditioner:
 
 
 class tslmm:
+    """
+    A tslmm instance to fit ARG-LMM with randomized restricted maximum likelihood (REML).
+
+    :param tskit.Treesequence ts: A tree sequence.
+    :param float mutation_rate: Mutation rate.
+    :param np.ndarray phenotypes: Array storing phenotypes.
+    :param np.ndarray covariates: Fixed effects covariates.
+    :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
+    :param np.ndarray variance_components: Initial estimates of `sigma` and `tau`.
+    :param str initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
+
+    """
 
     @staticmethod
     def _reml_stochastic_gradient(
@@ -431,7 +485,6 @@ class tslmm:
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
         for itt in range(max_iterations):
-            # state = np.clip(state, min_value, np.inf)  # force positive, not needed cus we're in log space
             gradient, _, _ = tslmm._reml_stochastic_gradient(
                 *np.exp(2 * state), y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
@@ -443,9 +496,7 @@ class tslmm:
             numerator = (1 - decay) * numerator + decay * update ** 2
             state = state + update
             running_mean = (1 - decay) * running_mean + decay * state
-            #if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
             if verbose: print(f"Iteration {itt}: {np.power(scale * np.exp(running_mean), 2).round(2)}")
-            #if callback is not None: callback(np.power(scale * running_mean, 2))
             if callback is not None: callback(np.power(scale * np.exp(running_mean), 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
@@ -597,7 +648,7 @@ class tslmm:
         variance_components: np.ndarray = None,
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
-        sgd_epsilon: float = 1e-3,  # if this is too large SGD will diverge # log space tolerates higher step size
+        sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
         sgd_samples: int = 5,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
@@ -605,13 +656,14 @@ class tslmm:
         rng: np.random.Generator = None,
         initialization: str = None,
     ):
-        """
+        """         
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic
         gradient descent is used to fit the model via REML.
 
         NB: `covariates` should not contain an intercept, as this is unidentifiable
         with the current GRM
         """
+        
 
         if rng is None: rng = np.random.default_rng()
 
@@ -648,7 +700,7 @@ class tslmm:
 
         self._optimization_trajectory = []
         self.variance_components, self.fixed_effects, self.residuals = \
-            self._reml_stochastic_optimize_log( # remove _log to rollback
+            self._reml_stochastic_optimize( # remove _log to rollback
                 starting_values=variance_components,
                 phenotypes=self.phenotypes,
                 covariates=self.covariates,

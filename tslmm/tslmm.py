@@ -167,7 +167,7 @@ class CovarianceModel:
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
-        centre: bool = False,
+        centre: bool = True,
     ) -> np.ndarray:
         r"""
         Matrix-vector product, `(Z (L L')^{-1} Z' \tau^2 + I \sigma^2) y`, optionally
@@ -433,7 +433,7 @@ class tslmm:
         for itt in range(max_iterations):
             # state = np.clip(state, min_value, np.inf)  # force positive, not needed cus we're in log space
             gradient, _, _ = tslmm._reml_stochastic_gradient(
-                *np.exp(state), y, X, covariance, preconditioner, 
+                *np.exp(2 * state), y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
             gradient *= np.exp(state) # chain rule, we're in logspace
@@ -444,14 +444,14 @@ class tslmm:
             state = state + update
             running_mean = (1 - decay) * running_mean + decay * state
             #if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
-            if verbose: print(f"Iteration {itt}: {(np.power(scale, 2) * np.exp(running_mean)).round(2)}")
+            if verbose: print(f"Iteration {itt}: {np.power(scale * np.exp(running_mean), 2).round(2)}")
             #if callback is not None: callback(np.power(scale * running_mean, 2))
-            if callback is not None: callback((np.power(scale, 2) * np.exp(running_mean)))
+            if callback is not None: callback(np.power(scale * np.exp(running_mean), 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
         _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
-            *np.exp(running_mean), y, X, covariance, preconditioner, 
+            *np.exp(2 * running_mean), y, X, covariance, preconditioner, 
             trace_samples=trace_samples, indices=indices, rng=rng
         )
         fixed_effects = np.linalg.solve(R, fixed_effects) * scale
@@ -459,7 +459,7 @@ class tslmm:
         residuals *= scale
         residuals += mean
 
-        return np.power(scale, 2) * np.exp(running_mean), fixed_effects, residuals
+        return np.power(scale * np.exp(running_mean), 2) , fixed_effects, residuals
 
 
     @staticmethod
@@ -556,7 +556,7 @@ class tslmm:
             return test_vectors - X @ (X.T @ test_vectors)
 
         def _G(test_vectors):
-            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=True)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
 
         def _PG(test_vectors):
             return _projection(_G(test_vectors))
@@ -597,7 +597,7 @@ class tslmm:
         variance_components: np.ndarray = None,
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
-        sgd_epsilon: float = 1e-2,  # if this is too large SGD will diverge # log space tolerates higher step size
+        sgd_epsilon: float = 1e-3,  # if this is too large SGD will diverge # log space tolerates higher step size
         sgd_samples: int = 5,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
@@ -626,7 +626,7 @@ class tslmm:
         self.phenotyped_individuals = phenotyped_individuals
         self.covariates = covariates
         self.phenotypes = phenotypes
-        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate, centre=True)
+        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 

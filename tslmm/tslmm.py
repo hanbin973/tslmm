@@ -375,6 +375,84 @@ class tslmm:
     """
 
     @staticmethod
+    def _reml_stochastic_average_information(
+        sigma: float, 
+        tau: float, 
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel, 
+        preconditioner: LowRankPreconditioner, 
+        indices: np.ndarray = None,
+        trace_samples: int = 1, 
+        rng: np.random.Generator = None,
+    ):
+        """
+        Unbiased estimate of gradient of `REML(sigma, tau | traits, covariates, tree_sequence)`
+        Average information is computed along
+        Also returns fixed effects and residuals
+        """
+        assert trace_samples > 0
+        assert min(sigma, tau) > 0
+
+        # TODO: this is written in a way so that it's easy to generalize, but sigma can be factored out so that
+        # we only need one trace estimate
+
+        def _dGds(test_vectors):  # d(covariance)/d(sigma)
+            return test_vectors
+
+        def _dGdt(test_vectors):  # d(covariance)/d(tau)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+
+        def _Ginv_dGds_trace(test_vectors):
+            return covariance.solve(sigma, tau, _dGds(test_vectors), preconditioner=M, indices=indices)
+
+        def _Ginv_dGdt_trace(test_vectors):
+            return covariance.solve(sigma, tau, _dGdt(test_vectors), preconditioner=M, indices=indices)
+
+        if rng is None: rng = np.random.default_rng()
+        # TODO: trace_samples == 1 is erroring out
+        trace_estimator = hutchinson if trace_samples == 1 else xtrace
+        M = None if preconditioner is None else lambda x: preconditioner(sigma, tau, x)
+        dim = covariance.dim if indices is None else indices.size
+
+        y, X = phenotypes, covariates
+        Xy = np.hstack([X, y.reshape(-1, 1)])
+        Ginv_Xy = covariance.solve(sigma, tau, Xy, preconditioner=M, indices=indices)
+        Xt_Ginv, Ginv_y = Ginv_Xy.T[:-1], Ginv_Xy.T[-1]
+        Xt_Ginv_X_inv = np.linalg.inv(Xt_Ginv @ X)
+        fixed_effects = Xt_Ginv_X_inv @ X.T @ Ginv_y
+        residuals = y - X @ fixed_effects
+        Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices)
+
+        # d(sigma)
+        Ginv_dGds_trace, _ = trace_estimator(_Ginv_dGds_trace, dim, trace_samples, rng=rng)
+        dGds_Ginv_r = _dGds(Ginv_r)
+        ytP_dGds_Py = np.dot(dGds_Ginv_r, Ginv_r) # Ginv_r = Py
+        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py
+
+        # d(tau)
+        Ginv_dGdt_trace, _ = trace_estimator(_Ginv_dGdt_trace, dim, trace_samples, rng=rng)
+        dGdt_Ginv_r = _dGdt(Ginv_r)
+        ytP_dGdt_Py = np.dot(dGdt_Ginv_r, Ginv_r) # Ginv_r = Py
+        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py
+        gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
+
+        # information ingredients
+        Ginv_dGds_Ginv_r = covariance.solve(sigma, tau, dGds_Ginv_r, preconditioner=M, indices=indices)
+        Ginv_dGdt_Ginv_r = covariance.solve(sigma, tau, dGdt_Ginv_r, preconditioner=M, indices=indices)
+        Xt_Ginv_dGds_Ginv_r = X.T @ Ginv_dGds_Ginv_r
+        Xt_Ginv_dGdt_Ginv_r = X.T @ Ginv_dGdt_Ginv_r
+
+        # average information
+        I_ss = np.dot(Ginv_dGds_Ginv_r, dGds_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginv_r
+        I_st = np.dot(Ginv_dGds_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
+        I_tt = np.dot(Ginv_dGdt_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGdt_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
+        average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+
+        return gradient, fixed_effects, residuals, average_information
+
+
+    @staticmethod
     def _reml_stochastic_gradient(
         sigma: float, 
         tau: float, 
@@ -548,38 +626,33 @@ class tslmm:
         else:
             starting_values = np.sqrt(starting_values) / scale
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
-        state = starting_values
+        state = np.power(starting_values, 2)
         running_mean = state
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
         for itt in range(max_iterations):
             state = np.clip(state, min_value, np.inf)  # force positive
-            gradient, _, _ = tslmm._reml_stochastic_gradient(
-                *np.power(state, 2), y, X, covariance, preconditioner, 
+            gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
+                *state, y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
-            gradient *= 2 * state  # variance to std deviation
-            # state += epsilon * gradient  # usual SGD update
-            denominator = (1 - decay) * denominator + decay * gradient ** 2
-            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
-            numerator = (1 - decay) * numerator + decay * update ** 2
-            state = state + update
-            running_mean = (1 - decay) * running_mean + decay * state
-            if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
-            if callback is not None: callback(np.power(scale * running_mean, 2))
+            state += np.linalg.inv(average_information) @ gradient
+            running_mean = state
+            if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}")
+            if callback is not None: callback(running_mean * np.power(scale, 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
-        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
-            *np.power(running_mean, 2), y, X, covariance, preconditioner, 
+        _, fixed_effects, residuals, _ = tslmm._reml_stochastic_average_information( # change to gradient for rollback
+            *running_mean, y, X, covariance, preconditioner, 
             trace_samples=trace_samples, indices=indices, rng=rng
         )
         fixed_effects = np.linalg.solve(R, fixed_effects) * scale
-        running_mean *= scale
+        running_mean *= np.power(scale, 2)
         residuals *= scale
         residuals += mean
 
-        return np.power(running_mean, 2), fixed_effects, residuals
+        return running_mean, fixed_effects, residuals
 
     @staticmethod
     def _haseman_elston_regression(

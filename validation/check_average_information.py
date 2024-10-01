@@ -69,10 +69,10 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng)
+        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization='he')
         trajectory = lmm._optimization_trajectory
-        lmm_he = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization='he')
-        trajectory_he = lmm_he._optimization_trajectory
+        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai', initialization='he')
+        trajectory_ai = lmm_ai._optimization_trajectory
 
         """
         # calculate exact objective over grid (this is painfully slow, TODO make a faster pre-factorized explicit version)
@@ -97,21 +97,28 @@ if __name__ == "__main__":
         """
 
         x_idx, y_idx = i_sim % num_cols, int(i_sim / num_cols)
-        for (xm, ym), (x, y) in zip(trajectory[:-1], trajectory[1:]):
+        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory[:-1], trajectory[1:])):
             ax[y_idx, x_idx].plot((xm, x), (ym, y), '-b')
-        for (xm, ym), (x, y) in zip(trajectory_he[:-1], trajectory_he[1:]):
+            #ax[y_idx, x_idx].text(xm, ym, (i+1), **{'color':'blue'})
+            ax[y_idx, x_idx].plot([xm], [ym], '*b')
+
+        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory_ai[:-1], trajectory_ai[1:])):
             ax[y_idx, x_idx].plot((xm, x), (ym, y), '-r')
+            #ax[y_idx, x_idx].text(xm, ym, (i+1), **{'color':'red'})
+            ax[y_idx, x_idx].plot([xm], [ym], '*r')
         ax[y_idx, x_idx].plot(true_sigma, true_tau, 'xr')
         ax[y_idx, x_idx].set_xlabel("$\\sigma^2$")
         ax[y_idx, x_idx].set_ylabel("$\\tau^2$")
         ax[y_idx, x_idx].set_title("Trial %d" % (i_sim+1))
-    
+
+
+
     from matplotlib.lines import Line2D
-    bline = Line2D([0], [0], label='Basic initialization', color='blue')
-    rline = Line2D([0], [0], label='HE initialization', color='red')
+    bline = Line2D([0], [0], label='AdaDelta', color='blue')
+    rline = Line2D([0], [0], label='Average information', color='red')
     fig.legend(handles=[bline, rline], loc = 'upper right', frameon=False)
 
     plt.suptitle(f"SGD on REML\n{ts.num_individuals} diploids, {covariates.shape[1]} covariates")
     plt.tight_layout()
-    plt.savefig("figs/check_haseman_elston.png")
+    plt.savefig("figs/check_average_information.png")
     plt.clf()

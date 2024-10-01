@@ -79,6 +79,38 @@ def _explicit_gradient(sigma, tau, tree_sequence, mutation_rate, y, X, subset=No
         np.dot(Ginvr.T, dGdt @ Ginvr) + 2 * dy_dt.T @ Ginvr
     return -grad_s / 2, -grad_t / 2
 
+def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, center_covariance=False):
+    if subset is None: subset = np.arange(tree_sequence.num_individuals)
+    G = _explicit_covariance_matrix(
+        sigma, tau, tree_sequence, mutation_rate,
+        center_around=subset if center_covariance else None,
+    )
+    G, X, y = G[np.ix_(subset, subset)], X[subset], y[subset]
+    dGdt = (G - np.eye(y.size) * sigma) / tau
+    dGds = np.eye(y.size)
+    GinvX = np.linalg.solve(G, X)
+    GinvY = np.linalg.solve(G, y)
+    Xt_Ginv_X = X.T @ GinvX
+    resid = y - X @ np.linalg.solve(Xt_Ginv_X, X.T @ GinvY)
+    Ginvr = np.linalg.solve(G, resid)
+    
+    dGds_Ginvr = dGds @ Ginvr
+    dGdt_Ginvr = dGdt @ Ginvr
+    
+    Ginv_dGds_Ginvr = np.linalg.solve(G, dGds_Ginvr)
+    Ginv_dGdt_Ginvr = np.linalg.solve(G, dGdt_Ginvr)
+    Xt_Ginv_dGds_Ginvr = X.T @ Ginv_dGds_Ginvr
+    Xt_Ginv_dGdt_Ginvr = X.T @ Ginv_dGdt_Ginvr
+    Xt_Ginv_X_inv = np.linalg.inv(Xt_Ginv_X)
+
+    I_ss = np.dot(Ginv_dGds_Ginvr, dGds_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginvr
+    I_st = np.dot(Ginv_dGds_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
+    I_tt = np.dot(Ginv_dGdt_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGdt_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
+    average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+
+    return average_information
+
+
 
 def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, predict_subset=None, center_covariance=False):
     if subset is None: subset = np.arange(tree_sequence.num_individuals)
@@ -370,9 +402,88 @@ class tslmm:
     :param np.ndarray covariates: Fixed effects covariates.
     :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
     :param np.ndarray variance_components: Initial estimates of `sigma` and `tau`.
-    :param str initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
+    :param initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
+    :param quadratic: Average information for optimization. Either `None` or `ai` (average information).
 
     """
+
+    @staticmethod
+    def _reml_stochastic_average_information(
+        sigma: float, 
+        tau: float, 
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel, 
+        preconditioner: LowRankPreconditioner, 
+        indices: np.ndarray = None,
+        trace_samples: int = 1, 
+        rng: np.random.Generator = None,
+    ):
+        """
+        Unbiased estimate of gradient of `REML(sigma, tau | traits, covariates, tree_sequence)`
+        Average information is computed along
+        Also returns fixed effects and residuals
+        """
+        assert trace_samples > 0
+        assert min(sigma, tau) > 0
+
+        # TODO: this is written in a way so that it's easy to generalize, but sigma can be factored out so that
+        # we only need one trace estimate
+
+        def _dGds(test_vectors):  # d(covariance)/d(sigma)
+            return test_vectors
+
+        def _dGdt(test_vectors):  # d(covariance)/d(tau)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+
+        def _Ginv_dGds_trace(test_vectors):
+            return covariance.solve(sigma, tau, _dGds(test_vectors), preconditioner=M, indices=indices)
+
+        def _Ginv_dGdt_trace(test_vectors):
+            return covariance.solve(sigma, tau, _dGdt(test_vectors), preconditioner=M, indices=indices)
+
+        if rng is None: rng = np.random.default_rng()
+        # TODO: trace_samples == 1 is erroring out
+        trace_estimator = hutchinson if trace_samples == 1 else xtrace
+        M = None if preconditioner is None else lambda x: preconditioner(sigma, tau, x)
+        dim = covariance.dim if indices is None else indices.size
+
+        y, X = phenotypes, covariates
+        Xy = np.hstack([X, y.reshape(-1, 1)])
+        Ginv_Xy = covariance.solve(sigma, tau, Xy, preconditioner=M, indices=indices)
+        Xt_Ginv, Ginv_y = Ginv_Xy.T[:-1], Ginv_Xy.T[-1]
+        Xt_Ginv_X_inv = np.linalg.inv(Xt_Ginv @ X)
+        fixed_effects = Xt_Ginv_X_inv @ X.T @ Ginv_y
+        residuals = y - X @ fixed_effects
+        Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices)
+
+        # d(sigma)
+        Ginv_dGds_trace, _ = trace_estimator(_Ginv_dGds_trace, dim, trace_samples, rng=rng)
+        dGds_Ginv_r = _dGds(Ginv_r)
+        ytP_dGds_Py = np.dot(dGds_Ginv_r, Ginv_r) # Ginv_r = Py
+        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py
+
+        # d(tau)
+        Ginv_dGdt_trace, _ = trace_estimator(_Ginv_dGdt_trace, dim, trace_samples, rng=rng)
+        dGdt_Ginv_r = _dGdt(Ginv_r)
+        ytP_dGdt_Py = np.dot(dGdt_Ginv_r, Ginv_r) # Ginv_r = Py
+        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py
+        gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
+
+        # information ingredients
+        Ginv_dGds_Ginv_r = covariance.solve(sigma, tau, dGds_Ginv_r, preconditioner=M, indices=indices)
+        Ginv_dGdt_Ginv_r = covariance.solve(sigma, tau, dGdt_Ginv_r, preconditioner=M, indices=indices)
+        Xt_Ginv_dGds_Ginv_r = X.T @ Ginv_dGds_Ginv_r
+        Xt_Ginv_dGdt_Ginv_r = X.T @ Ginv_dGdt_Ginv_r
+
+        # average information
+        I_ss = np.dot(Ginv_dGds_Ginv_r, dGds_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginv_r
+        I_st = np.dot(Ginv_dGds_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
+        I_tt = np.dot(Ginv_dGdt_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGdt_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
+        average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+
+        return gradient, fixed_effects, residuals, average_information
+
 
     @staticmethod
     def _reml_stochastic_gradient(
@@ -445,75 +556,6 @@ class tslmm:
         return gradient, fixed_effects, residuals
 
     @staticmethod
-    def _reml_stochastic_optimize_log(
-        starting_values: np.ndarray,
-        phenotypes: np.ndarray, 
-        covariates: np.ndarray, 
-        covariance: CovarianceModel,
-        preconditioner: LowRankPreconditioner,
-        indices: np.ndarray = None,
-        trace_samples: int = 10, 
-        decay: float = 0.1, 
-        epsilon: float = 1e-4, 
-        min_value: float = 1e-4,
-        max_iterations: int = 100,
-        verbose: bool = True,
-        callback: Callable = None,
-        rng: np.random.Generator = None, 
-    ):
-        """
-        Set `max_iterations` to zero to skip optimization
-        """
-        if rng is None: rng = np.random.default_rng()
-
-        # scale things so that hyperparameters are easier to default
-        mean, scale = np.mean(phenotypes), np.std(phenotypes)
-        y = (phenotypes - mean) / scale
-        X, R = np.linalg.qr(covariates)
-
-        # TODO: use better starting values, like HE regression
-        if starting_values is None:
-            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
-            ols = np.var(y - ols, ddof=covariates.shape[1])
-            starting_values = np.full(2, np.sqrt(ols / 2))
-        else:
-            starting_values = np.sqrt(starting_values) / scale
-        # AdaDelta (https://arxiv.org/pdf/1212.5701)
-        # optimize in log-space
-        state = np.log(starting_values)
-        running_mean = state
-        numerator = np.zeros(state.size)
-        denominator = np.zeros(state.size)
-        for itt in range(max_iterations):
-            gradient, _, _ = tslmm._reml_stochastic_gradient(
-                *np.exp(2 * state), y, X, covariance, preconditioner, 
-                trace_samples=trace_samples, indices=indices, rng=rng,
-            )
-            gradient *= np.exp(state) # chain rule, we're in logspace
-            # state += epsilon * gradient  # usual SGD update
-            denominator = (1 - decay) * denominator + decay * gradient ** 2
-            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
-            numerator = (1 - decay) * numerator + decay * update ** 2
-            state = state + update
-            running_mean = (1 - decay) * running_mean + decay * state
-            if verbose: print(f"Iteration {itt}: {np.power(scale * np.exp(running_mean), 2).round(2)}")
-            if callback is not None: callback(np.power(scale * np.exp(running_mean), 2))
-            # TODO: stopping condition based on change in running mean
-            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
-
-        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
-            *np.exp(2 * running_mean), y, X, covariance, preconditioner, 
-            trace_samples=trace_samples, indices=indices, rng=rng
-        )
-        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
-        #running_mean *= scale
-        residuals *= scale
-        residuals += mean
-
-        return np.power(scale * np.exp(running_mean), 2) , fixed_effects, residuals
-
-
-    @staticmethod
     def _reml_stochastic_optimize(
         starting_values: np.ndarray,
         phenotypes: np.ndarray, 
@@ -546,12 +588,14 @@ class tslmm:
             ols = np.var(y - ols, ddof=covariates.shape[1])
             starting_values = np.full(2, np.sqrt(ols / 2))
         else:
+            starting_values = np.clip(starting_values, min_value, np.inf)
             starting_values = np.sqrt(starting_values) / scale
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = starting_values
         running_mean = state
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
+        if callback is not None: callback(np.power(scale * running_mean, 2))
         for itt in range(max_iterations):
             state = np.clip(state, min_value, np.inf)  # force positive
             gradient, _, _ = tslmm._reml_stochastic_gradient(
@@ -580,6 +624,73 @@ class tslmm:
         residuals += mean
 
         return np.power(running_mean, 2), fixed_effects, residuals
+    
+    @staticmethod
+    def _reml_stochastic_optimize_ai(
+        starting_values: np.ndarray,
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel,
+        preconditioner: LowRankPreconditioner,
+        indices: np.ndarray = None,
+        trace_samples: int = 10, 
+        decay: float = 0.1, 
+        epsilon: float = 1e-4, 
+        min_value: float = 1e-4,
+        max_iterations: int = 100,
+        verbose: bool = True,
+        callback: Callable = None,
+        rng: np.random.Generator = None, 
+    ):
+        """
+        Set `max_iterations` to zero to skip optimization
+        See https://arxiv.org/abs/1805.05188 theorem 3 and 5
+        """
+        if rng is None: rng = np.random.default_rng()
+
+        # scale things so that hyperparameters are easier to default
+        mean, scale = np.mean(phenotypes), np.std(phenotypes)
+        y = (phenotypes - mean) / scale
+        X, R = np.linalg.qr(covariates)
+
+        # TODO: use better starting values, like HE regression
+        if starting_values is None:
+            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
+            ols = np.var(y - ols, ddof=covariates.shape[1])
+            starting_values = np.full(2, np.sqrt(ols / 2))
+        else:
+            starting_values = np.clip(starting_values, min_value, np.inf)
+            starting_values = np.sqrt(starting_values) / scale
+        
+        # AdaDelta (https://arxiv.org/pdf/1212.5701)
+        state = np.power(starting_values, 2)
+        running_mean = state
+        numerator = np.zeros(state.size)
+        denominator = np.zeros(state.size)
+        if callback is not None: callback(running_mean * np.power(scale, 2))
+        for itt in range(max_iterations):
+            gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
+                *state, y, X, covariance, preconditioner, 
+                trace_samples=trace_samples, indices=indices, rng=rng,
+            )
+            state += np.linalg.solve(average_information, gradient)
+            state = np.clip(state, min_value, np.inf)  # force positive
+            running_mean = state
+            if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}")
+            if callback is not None: callback(running_mean * np.power(scale, 2))
+            # TODO: stopping condition based on change in running mean
+            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
+
+        _, fixed_effects, residuals, _ = tslmm._reml_stochastic_average_information( # change to gradient for rollback
+            *running_mean, y, X, covariance, preconditioner, 
+            trace_samples=trace_samples, indices=indices, rng=rng
+        )
+        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
+        running_mean *= np.power(scale, 2)
+        residuals *= scale
+        residuals += mean
+
+        return running_mean, fixed_effects, residuals
 
     @staticmethod
     def _haseman_elston_regression(
@@ -607,7 +718,7 @@ class tslmm:
             return test_vectors - X @ (X.T @ test_vectors)
 
         def _G(test_vectors):
-            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=True)
 
         def _PG(test_vectors):
             return _projection(_G(test_vectors))
@@ -649,12 +760,13 @@ class tslmm:
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
         sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
-        sgd_samples: int = 5,
+        sgd_samples: int = 20,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
-        preconditioner_depth: int = 1,
+        preconditioner_depth: int = 3,
         rng: np.random.Generator = None,
-        initialization: str = None,
+        initialization = None,
+        quadratic = None
     ):
         """         
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic
@@ -679,12 +791,13 @@ class tslmm:
         self.covariates = covariates
         self.phenotypes = phenotypes
         self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
+        # should define preconditioners for HE regressioin
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 
                 rank=preconditioner_rank, 
                 depth=preconditioner_depth,
-                num_vectors=2 * preconditioner_rank, 
+                num_vectors= 2 * preconditioner_rank, 
                 indices=self.phenotyped_individuals,
                 rng=rng,
             )
@@ -699,22 +812,40 @@ class tslmm:
             )
 
         self._optimization_trajectory = []
-        self.variance_components, self.fixed_effects, self.residuals = \
-            self._reml_stochastic_optimize( # remove _log to rollback
-                starting_values=variance_components,
-                phenotypes=self.phenotypes,
-                covariates=self.covariates,
-                covariance=self.covariance,
-                preconditioner=self.preconditioner,
-                indices=self.phenotyped_individuals,
-                max_iterations=sgd_iterations, # if variance_components is None else 0,
-                trace_samples=sgd_samples,
-                epsilon=sgd_epsilon,
-                decay=sgd_decay,
-                verbose=sgd_verbose,
-                rng=rng,
-                callback=lambda x: self._optimization_trajectory.append(x),
-            )
+        if quadratic == "ai":
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize_ai(
+                    starting_values=variance_components,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=sgd_iterations, # if variance_components is None else 0,
+                    trace_samples=sgd_samples,
+                    epsilon=sgd_epsilon,
+                    decay=sgd_decay,
+                    verbose=sgd_verbose,
+                    rng=rng,
+                    callback=lambda x: self._optimization_trajectory.append(x),
+                )
+        else:
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize(
+                    starting_values=variance_components,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=sgd_iterations, # if variance_components is None else 0,
+                    trace_samples=sgd_samples,
+                    epsilon=sgd_epsilon,
+                    decay=sgd_decay,
+                    verbose=sgd_verbose,
+                    rng=rng,
+                    callback=lambda x: self._optimization_trajectory.append(x),
+                )
 
     def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None):
         """

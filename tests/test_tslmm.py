@@ -8,9 +8,9 @@ import msprime
 import scipy
 import numdifftools as nd
 
-from tsblup.tslmm import tslmm
-from tsblup.tslmm import CovarianceModel, LowRankPreconditioner
-from tsblup.tslmm import _explicit_covariance_matrix, _explicit_reml, _explicit_gradient
+from tslmm.tslmm import tslmm
+from tslmm.tslmm import CovarianceModel, LowRankPreconditioner
+from tslmm.tslmm import _explicit_covariance_matrix, _explicit_reml, _explicit_gradient
 
 
 class TestCovarianceModel:

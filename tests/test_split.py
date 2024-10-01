@@ -5,7 +5,7 @@ import numpy as np
 import tskit
 import msprime
 
-import tsblup
+import tslmm
 
 
 # NOTE: copied from tskit's tsutil test module. Can delete this if/when we port into
@@ -95,16 +95,16 @@ class TestSplit:
 
     def test_large_example(self):
         ts = self.example_ts()
-        split_ts = tsblup.split_upwards(ts)
+        split_ts = tslmm.split_upwards(ts)
         self.check_split(ts, split_ts)
-        split_ts2 = tsblup.split_upwards_numba(ts)
+        split_ts2 = tslmm.split_upwards_numba(ts)
         split_ts.tables.assert_equals(split_ts2.tables, ignore_provenance=True)
 
     @pytest.mark.parametrize("n", [3, 4, 5])
     def test_all_trees_ts(self, n):
         ts = all_trees_ts(n)
-        split_ts = tsblup.split_upwards(ts)
-        split_ts2 = tsblup.split_upwards_numba(ts)
+        split_ts = tslmm.split_upwards(ts)
+        split_ts2 = tslmm.split_upwards_numba(ts)
         # print(split_ts2.draw_text())
         # assert split_ts.num_edges > ts.num_edges
         self.check_split(ts, split_ts)
@@ -116,7 +116,7 @@ class TestSplit:
         ts = all_trees_ts(n)
         print(ts.draw_text())
         print(ts.tables.edges)
-        split_ts = tsblup.split_upwards(ts)
+        split_ts = tslmm.split_upwards(ts)
         over_split_ts = split_by_tree(ts)
         assert split_ts.num_edges > ts.num_edges
         print(ts.num_edges, split_ts.num_edges, over_split_ts.num_edges)
@@ -146,7 +146,7 @@ class TestSplit:
         tables.edges.add_row(left=0, right=10, parent=5, child=3)
         tables.edges.add_row(left=0, right=10, parent=5, child=4)
         ts = tables.tree_sequence()
-        split_ts = tsblup.split_upwards(ts)
+        split_ts = tslmm.split_upwards(ts)
         self.check_split(ts, split_ts)
         assert ts.num_edges == 6
         assert np.sum(ts.edges_child == 3) == 1
@@ -155,5 +155,5 @@ class TestSplit:
         assert np.sum(split_ts.edges_child == 3) == 2
         assert np.sum(split_ts.edges_child == 4) == 2
 
-        split_ts2 = tsblup.split_upwards_numba(ts)
+        split_ts2 = tslmm.split_upwards_numba(ts)
         split_ts.tables.assert_equals(split_ts2.tables, ignore_provenance=True)

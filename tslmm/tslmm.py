@@ -79,6 +79,38 @@ def _explicit_gradient(sigma, tau, tree_sequence, mutation_rate, y, X, subset=No
         np.dot(Ginvr.T, dGdt @ Ginvr) + 2 * dy_dt.T @ Ginvr
     return -grad_s / 2, -grad_t / 2
 
+def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, center_covariance=False):
+    if subset is None: subset = np.arange(tree_sequence.num_individuals)
+    G = _explicit_covariance_matrix(
+        sigma, tau, tree_sequence, mutation_rate,
+        center_around=subset if center_covariance else None,
+    )
+    G, X, y = G[np.ix_(subset, subset)], X[subset], y[subset]
+    dGdt = (G - np.eye(y.size) * sigma) / tau
+    dGds = np.eye(y.size)
+    GinvX = np.linalg.solve(G, X)
+    GinvY = np.linalg.solve(G, y)
+    Xt_Ginv_X = X.T @ GinvX
+    resid = y - X @ np.linalg.solve(Xt_Ginv_X, X.T @ GinvY)
+    Ginvr = np.linalg.solve(G, resid)
+    
+    dGds_Ginvr = dGds @ Ginvr
+    dGdt_Ginvr = dGdt @ Ginvr
+    
+    Ginv_dGds_Ginvr = np.linalg.solve(G, dGds_Ginvr)
+    Ginv_dGdt_Ginvr = np.linalg.solve(G, dGdt_Ginvr)
+    Xt_Ginv_dGds_Ginvr = X.T @ Ginv_dGds_Ginvr
+    Xt_Ginv_dGdt_Ginvr = X.T @ Ginv_dGdt_Ginvr
+    Xt_Ginv_X_inv = np.linalg.inv(Xt_Ginv_X)
+
+    I_ss = np.dot(Ginv_dGds_Ginvr, dGds_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginvr
+    I_st = np.dot(Ginv_dGds_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
+    I_tt = np.dot(Ginv_dGdt_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGdt_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
+    average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+
+    return average_information
+
+
 
 def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, predict_subset=None, center_covariance=False):
     if subset is None: subset = np.arange(tree_sequence.num_individuals)
@@ -181,7 +213,7 @@ class CovarianceModel:
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
-        centre: bool = True,
+        centre: bool = False,
     ) -> np.ndarray:
         r"""
         Multiplies the covariance matrix to an array.
@@ -370,8 +402,8 @@ class tslmm:
     :param np.ndarray covariates: Fixed effects covariates.
     :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
     :param np.ndarray variance_components: Initial estimates of `sigma` and `tau`.
-    :param str initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
-    :param str quadratic: Average information for optimization. Either `None` or `ai` (average information).
+    :param initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
+    :param quadratic: Average information for optimization. Either `None` or `ai` (average information).
 
     """
 
@@ -634,12 +666,12 @@ class tslmm:
         denominator = np.zeros(state.size)
         if callback is not None: callback(running_mean * np.power(scale, 2))
         for itt in range(max_iterations):
-            state = np.clip(state, min_value, np.inf)  # force positive
             gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
                 *state, y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
             state += np.linalg.inv(average_information) @ gradient
+            state = np.clip(state, min_value, np.inf)  # force positive
             running_mean = state
             if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}")
             if callback is not None: callback(running_mean * np.power(scale, 2))
@@ -683,7 +715,7 @@ class tslmm:
             return test_vectors - X @ (X.T @ test_vectors)
 
         def _G(test_vectors):
-            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=True)
 
         def _PG(test_vectors):
             return _projection(_G(test_vectors))
@@ -730,8 +762,8 @@ class tslmm:
         preconditioner_rank: int = 10,
         preconditioner_depth: int = 1,
         rng: np.random.Generator = None,
-        initialization: str = None,
-        quadratic: str = None
+        initialization = None,
+        quadratic = None
     ):
         """         
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic

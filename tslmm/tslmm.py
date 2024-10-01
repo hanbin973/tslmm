@@ -609,7 +609,7 @@ class tslmm:
             numerator = (1 - decay) * numerator + decay * update ** 2
             state = state + update
             running_mean = (1 - decay) * running_mean + decay * state
-            if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
+            if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}, {np.linalg.norm(gradient)}")
             if callback is not None: callback(np.power(scale * running_mean, 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
@@ -674,7 +674,7 @@ class tslmm:
             state += np.linalg.solve(average_information, gradient)
             state = np.clip(state, min_value, np.inf)  # force positive
             running_mean = state
-            if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}")
+            if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}, {np.linalg.norm(gradient)}")
             if callback is not None: callback(running_mean * np.power(scale, 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
@@ -870,5 +870,5 @@ class tslmm:
 
         return (E_g, V_g) if variance_samples > 0 else E_g
     
-
+## TODO: borrow some ideas from https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1009659
 

@@ -181,7 +181,7 @@ class CovarianceModel:
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
-        centre: bool = False,
+        centre: bool = True,
     ) -> np.ndarray:
         r"""
         Multiplies the covariance matrix to an array.
@@ -371,6 +371,7 @@ class tslmm:
     :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
     :param np.ndarray variance_components: Initial estimates of `sigma` and `tau`.
     :param str initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
+    :param str quadratic: Average information for optimization. Either `None` or `ai` (average information).
 
     """
 
@@ -523,75 +524,6 @@ class tslmm:
         return gradient, fixed_effects, residuals
 
     @staticmethod
-    def _reml_stochastic_optimize_log(
-        starting_values: np.ndarray,
-        phenotypes: np.ndarray, 
-        covariates: np.ndarray, 
-        covariance: CovarianceModel,
-        preconditioner: LowRankPreconditioner,
-        indices: np.ndarray = None,
-        trace_samples: int = 10, 
-        decay: float = 0.1, 
-        epsilon: float = 1e-4, 
-        min_value: float = 1e-4,
-        max_iterations: int = 100,
-        verbose: bool = True,
-        callback: Callable = None,
-        rng: np.random.Generator = None, 
-    ):
-        """
-        Set `max_iterations` to zero to skip optimization
-        """
-        if rng is None: rng = np.random.default_rng()
-
-        # scale things so that hyperparameters are easier to default
-        mean, scale = np.mean(phenotypes), np.std(phenotypes)
-        y = (phenotypes - mean) / scale
-        X, R = np.linalg.qr(covariates)
-
-        # TODO: use better starting values, like HE regression
-        if starting_values is None:
-            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
-            ols = np.var(y - ols, ddof=covariates.shape[1])
-            starting_values = np.full(2, np.sqrt(ols / 2))
-        else:
-            starting_values = np.sqrt(starting_values) / scale
-        # AdaDelta (https://arxiv.org/pdf/1212.5701)
-        # optimize in log-space
-        state = np.log(starting_values)
-        running_mean = state
-        numerator = np.zeros(state.size)
-        denominator = np.zeros(state.size)
-        for itt in range(max_iterations):
-            gradient, _, _ = tslmm._reml_stochastic_gradient(
-                *np.exp(2 * state), y, X, covariance, preconditioner, 
-                trace_samples=trace_samples, indices=indices, rng=rng,
-            )
-            gradient *= np.exp(state) # chain rule, we're in logspace
-            # state += epsilon * gradient  # usual SGD update
-            denominator = (1 - decay) * denominator + decay * gradient ** 2
-            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
-            numerator = (1 - decay) * numerator + decay * update ** 2
-            state = state + update
-            running_mean = (1 - decay) * running_mean + decay * state
-            if verbose: print(f"Iteration {itt}: {np.power(scale * np.exp(running_mean), 2).round(2)}")
-            if callback is not None: callback(np.power(scale * np.exp(running_mean), 2))
-            # TODO: stopping condition based on change in running mean
-            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
-
-        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
-            *np.exp(2 * running_mean), y, X, covariance, preconditioner, 
-            trace_samples=trace_samples, indices=indices, rng=rng
-        )
-        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
-        #running_mean *= scale
-        residuals *= scale
-        residuals += mean
-
-        return np.power(scale * np.exp(running_mean), 2) , fixed_effects, residuals
-
-
-    @staticmethod
     def _reml_stochastic_optimize(
         starting_values: np.ndarray,
         phenotypes: np.ndarray, 
@@ -626,10 +558,81 @@ class tslmm:
         else:
             starting_values = np.sqrt(starting_values) / scale
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
+        state = starting_values
+        running_mean = state
+        numerator = np.zeros(state.size)
+        denominator = np.zeros(state.size)
+        if callback is not None: callback(np.power(scale * running_mean, 2))
+        for itt in range(max_iterations):
+            state = np.clip(state, min_value, np.inf)  # force positive
+            gradient, _, _ = tslmm._reml_stochastic_gradient(
+                *np.power(state, 2), y, X, covariance, preconditioner, 
+                trace_samples=trace_samples, indices=indices, rng=rng,
+            )
+            gradient *= 2 * state  # variance to std deviation
+            # state += epsilon * gradient  # usual SGD update
+            denominator = (1 - decay) * denominator + decay * gradient ** 2
+            update = np.sqrt(numerator + epsilon) / np.sqrt(denominator + epsilon) * gradient
+            numerator = (1 - decay) * numerator + decay * update ** 2
+            state = state + update
+            running_mean = (1 - decay) * running_mean + decay * state
+            if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}")
+            if callback is not None: callback(np.power(scale * running_mean, 2))
+            # TODO: stopping condition based on change in running mean
+            # TODO: fit a quadratic using gradient from last K iterations to get better estimate
+
+        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
+            *np.power(running_mean, 2), y, X, covariance, preconditioner, 
+            trace_samples=trace_samples, indices=indices, rng=rng
+        )
+        fixed_effects = np.linalg.solve(R, fixed_effects) * scale
+        running_mean *= scale
+        residuals *= scale
+        residuals += mean
+
+        return np.power(running_mean, 2), fixed_effects, residuals
+    
+    @staticmethod
+    def _reml_stochastic_optimize_ai(
+        starting_values: np.ndarray,
+        phenotypes: np.ndarray, 
+        covariates: np.ndarray, 
+        covariance: CovarianceModel,
+        preconditioner: LowRankPreconditioner,
+        indices: np.ndarray = None,
+        trace_samples: int = 10, 
+        decay: float = 0.1, 
+        epsilon: float = 1e-4, 
+        min_value: float = 1e-4,
+        max_iterations: int = 100,
+        verbose: bool = True,
+        callback: Callable = None,
+        rng: np.random.Generator = None, 
+    ):
+        """
+        Set `max_iterations` to zero to skip optimization
+        See https://arxiv.org/abs/1805.05188 theorem 3 and 5
+        """
+        if rng is None: rng = np.random.default_rng()
+
+        # scale things so that hyperparameters are easier to default
+        mean, scale = np.mean(phenotypes), np.std(phenotypes)
+        y = (phenotypes - mean) / scale
+        X, R = np.linalg.qr(covariates)
+
+        # TODO: use better starting values, like HE regression
+        if starting_values is None:
+            ols = covariates @ np.linalg.solve(R.T @ R, covariates.T @ y)
+            ols = np.var(y - ols, ddof=covariates.shape[1])
+            starting_values = np.full(2, np.sqrt(ols / 2))
+        else:
+            starting_values = np.sqrt(starting_values) / scale
+        # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = np.power(starting_values, 2)
         running_mean = state
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
+        if callback is not None: callback(running_mean * np.power(scale, 2))
         for itt in range(max_iterations):
             state = np.clip(state, min_value, np.inf)  # force positive
             gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
@@ -728,6 +731,7 @@ class tslmm:
         preconditioner_depth: int = 1,
         rng: np.random.Generator = None,
         initialization: str = None,
+        quadratic: str = None
     ):
         """         
         NB: `variance_components` are assumed fixed if provided; otherwise stochastic
@@ -772,22 +776,40 @@ class tslmm:
             )
 
         self._optimization_trajectory = []
-        self.variance_components, self.fixed_effects, self.residuals = \
-            self._reml_stochastic_optimize( # remove _log to rollback
-                starting_values=variance_components,
-                phenotypes=self.phenotypes,
-                covariates=self.covariates,
-                covariance=self.covariance,
-                preconditioner=self.preconditioner,
-                indices=self.phenotyped_individuals,
-                max_iterations=sgd_iterations, # if variance_components is None else 0,
-                trace_samples=sgd_samples,
-                epsilon=sgd_epsilon,
-                decay=sgd_decay,
-                verbose=sgd_verbose,
-                rng=rng,
-                callback=lambda x: self._optimization_trajectory.append(x),
-            )
+        if quadratic == "ai":
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize_ai( # remove _log to rollback
+                    starting_values=variance_components,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=sgd_iterations, # if variance_components is None else 0,
+                    trace_samples=sgd_samples,
+                    epsilon=sgd_epsilon,
+                    decay=sgd_decay,
+                    verbose=sgd_verbose,
+                    rng=rng,
+                    callback=lambda x: self._optimization_trajectory.append(x),
+                )
+        else:
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize( # remove _log to rollback
+                    starting_values=variance_components,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=sgd_iterations, # if variance_components is None else 0,
+                    trace_samples=sgd_samples,
+                    epsilon=sgd_epsilon,
+                    decay=sgd_decay,
+                    verbose=sgd_verbose,
+                    rng=rng,
+                    callback=lambda x: self._optimization_trajectory.append(x),
+                )
 
     def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None):
         """

@@ -588,6 +588,7 @@ class tslmm:
             ols = np.var(y - ols, ddof=covariates.shape[1])
             starting_values = np.full(2, np.sqrt(ols / 2))
         else:
+            starting_values = np.clip(starting_values, min_value, np.inf)
             starting_values = np.sqrt(starting_values) / scale
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = starting_values
@@ -658,7 +659,9 @@ class tslmm:
             ols = np.var(y - ols, ddof=covariates.shape[1])
             starting_values = np.full(2, np.sqrt(ols / 2))
         else:
+            starting_values = np.clip(starting_values, min_value, np.inf)
             starting_values = np.sqrt(starting_values) / scale
+        
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = np.power(starting_values, 2)
         running_mean = state
@@ -670,7 +673,7 @@ class tslmm:
                 *state, y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
-            state += np.linalg.inv(average_information) @ gradient
+            state += np.linalg.solve(average_information, gradient)
             state = np.clip(state, min_value, np.inf)  # force positive
             running_mean = state
             if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}")
@@ -757,10 +760,10 @@ class tslmm:
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
         sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
-        sgd_samples: int = 5,
+        sgd_samples: int = 20,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 10,
-        preconditioner_depth: int = 1,
+        preconditioner_depth: int = 3,
         rng: np.random.Generator = None,
         initialization = None,
         quadratic = None
@@ -788,12 +791,13 @@ class tslmm:
         self.covariates = covariates
         self.phenotypes = phenotypes
         self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
+        # should define preconditioners for HE regressioin
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 
                 rank=preconditioner_rank, 
                 depth=preconditioner_depth,
-                num_vectors=2 * preconditioner_rank, 
+                num_vectors= 2 * preconditioner_rank, 
                 indices=self.phenotyped_individuals,
                 rng=rng,
             )
@@ -810,7 +814,7 @@ class tslmm:
         self._optimization_trajectory = []
         if quadratic == "ai":
             self.variance_components, self.fixed_effects, self.residuals = \
-                self._reml_stochastic_optimize_ai( # remove _log to rollback
+                self._reml_stochastic_optimize_ai(
                     starting_values=variance_components,
                     phenotypes=self.phenotypes,
                     covariates=self.covariates,
@@ -827,7 +831,7 @@ class tslmm:
                 )
         else:
             self.variance_components, self.fixed_effects, self.residuals = \
-                self._reml_stochastic_optimize( # remove _log to rollback
+                self._reml_stochastic_optimize(
                     starting_values=variance_components,
                     phenotypes=self.phenotypes,
                     covariates=self.covariates,

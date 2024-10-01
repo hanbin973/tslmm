@@ -40,7 +40,12 @@ if __name__ == "__main__":
 
     num_threads = 4
     numba.set_num_threads(num_threads)
-    for i_sim in range(5):
+
+    num_sims, num_cols = 9, 3
+    num_rows = int(num_sims / num_cols)
+    len_unit = 3
+    fig, ax = plt.subplots(num_rows, num_cols, figsize=(len_unit * num_cols, len_unit * num_rows))
+    for i_sim in range(num_sims):
         rng = np.random.default_rng(seed=(i_sim+1))
         
         n_samples = 1000
@@ -64,9 +69,9 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng)
+        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization='he')
         trajectory = lmm._optimization_trajectory
-        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai')
+        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai', initialization='he')
         trajectory_ai = lmm_ai._optimization_trajectory
 
         """
@@ -90,16 +95,30 @@ if __name__ == "__main__":
         cbar = plt.colorbar(mesh)
         cbar.set_label("REML")
         """
-        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory[:-1], trajectory[1:])):
-            plt.plot((xm, x), (ym, y), '-b')
-            plt.text(xm, ym, (i+1), **{'color':'blue'})
-        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory_ai[:-1], trajectory_ai[1:])):
-            plt.plot((xm, x), (ym, y), '-r')
-            plt.text(xm, ym, (i+1), **{'color':'red'})
 
-        plt.plot(true_sigma, true_tau, 'xr')
-        plt.xlabel("$\\sigma^2$")
-        plt.ylabel("$\\tau^2$")
-        plt.title(f"SGD on REML\n{ts.num_individuals} diploids, {covariates.shape[1]} covariates")
-        plt.savefig("figs/check_average_information_%s.png" % i_sim)
-        plt.clf()
+        x_idx, y_idx = i_sim % num_cols, int(i_sim / num_cols)
+        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory[:-1], trajectory[1:])):
+            ax[y_idx, x_idx].plot((xm, x), (ym, y), '-b')
+            #ax[y_idx, x_idx].text(xm, ym, (i+1), **{'color':'blue'})
+            ax[y_idx, x_idx].plot([xm], [ym], '*b')
+
+        for i, ((xm, ym), (x, y)) in enumerate(zip(trajectory_ai[:-1], trajectory_ai[1:])):
+            ax[y_idx, x_idx].plot((xm, x), (ym, y), '-r')
+            #ax[y_idx, x_idx].text(xm, ym, (i+1), **{'color':'red'})
+            ax[y_idx, x_idx].plot([xm], [ym], '*r')
+        ax[y_idx, x_idx].plot(true_sigma, true_tau, 'xr')
+        ax[y_idx, x_idx].set_xlabel("$\\sigma^2$")
+        ax[y_idx, x_idx].set_ylabel("$\\tau^2$")
+        ax[y_idx, x_idx].set_title("Trial %d" % (i_sim+1))
+
+
+
+    from matplotlib.lines import Line2D
+    bline = Line2D([0], [0], label='AdaDelta', color='blue')
+    rline = Line2D([0], [0], label='Average information', color='red')
+    fig.legend(handles=[bline, rline], loc = 'upper right', frameon=False)
+
+    plt.suptitle(f"SGD on REML\n{ts.num_individuals} diploids, {covariates.shape[1]} covariates")
+    plt.tight_layout()
+    plt.savefig("figs/check_average_information.png")
+    plt.clf()

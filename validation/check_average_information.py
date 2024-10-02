@@ -38,7 +38,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 4
+    num_threads = 8
     numba.set_num_threads(num_threads)
 
     num_sims, num_cols = 9, 3
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         
         n_samples = 1000
         n_pops = 10
-        s_length = 1e5
+        s_length = 1e4
         ne = np.linspace(1e3, 1e5, n_pops)
         island_model = msprime.Demography.island_model(ne, 1e-5 / n_pops)
         for i in range(1, n_pops):
@@ -69,9 +69,10 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization='he')
+        init = 'he'
+        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization=init)
         trajectory = lmm._optimization_trajectory
-        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai', initialization='he')
+        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai', initialization=init)
         trajectory_ai = lmm_ai._optimization_trajectory
 
         """

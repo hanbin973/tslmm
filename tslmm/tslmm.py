@@ -758,7 +758,7 @@ class tslmm:
         sgd_iterations: int = 50,  # TODO: use a stopping criterion
         sgd_decay: float = 0.1,
         sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
-        sgd_samples: int = 5,
+        sgd_samples: int = 50,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 20,
         preconditioner_depth: int = 3,
@@ -805,7 +805,7 @@ class tslmm:
                 covariates=self.covariates,
                 covariance=self.covariance,
                 indices=self.phenotyped_individuals,
-                trace_samples=sgd_samples,
+                trace_samples=200,
                 rng=rng,
             )
 

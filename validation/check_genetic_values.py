@@ -44,7 +44,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 4
+    num_threads = 16
     numba.set_num_threads(num_threads)
     rng = np.random.default_rng(seed=1)
     
@@ -71,7 +71,8 @@ if __name__ == "__main__":
     traits, covariates, fixef, genetic_values = simulate(*varcov, ts, mu, rng=rng)
 
     num_samples=100
-    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, variance_components=varcov, rng=rng)
+    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+    lmm.set_variance_components(variance_components=varcov,)
     blups, var_blups = lmm.predict(np.arange(ts.num_individuals), variance_samples=num_samples)
 
     _, post_cov_blups = _explicit_posterior(

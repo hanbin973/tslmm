@@ -50,7 +50,7 @@ if __name__ == "__main__":
         
         n_samples = 1000
         n_pops = 10
-        s_length = 1e5
+        s_length = 1e4
         ne = np.linspace(1e3, 1e5, n_pops)
         island_model = msprime.Demography.island_model(ne, 1e-5 / n_pops)
         for i in range(1, n_pops):
@@ -69,10 +69,12 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        init = 'he'
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, initialization=init)
+        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm.fit_variance_components(method='adadelta', haseman_elston=True, verbose=True,)
         trajectory = lmm._optimization_trajectory
-        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, sgd_verbose=True, rng=rng, quadratic='ai', initialization=init)
+
+        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm_ai.fit_variance_components(method='ai', haseman_elston=True, verbose=True,)
         trajectory_ai = lmm_ai._optimization_trajectory
 
         """

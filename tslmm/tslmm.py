@@ -761,7 +761,7 @@ class tslmm:
         sgd_samples: int = 50,
         sgd_verbose: bool = True,
         preconditioner_rank: int = 20,
-        preconditioner_depth: int = 3,
+        preconditioner_depth: int = 5,
         rng: np.random.Generator = None,
         initialization = None,
         quadratic = None
@@ -789,7 +789,6 @@ class tslmm:
         self.covariates = covariates
         self.phenotypes = phenotypes
         self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
-        # should define preconditioners for HE regressioin
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 
@@ -805,7 +804,7 @@ class tslmm:
                 covariates=self.covariates,
                 covariance=self.covariance,
                 indices=self.phenotyped_individuals,
-                trace_samples=200,
+                trace_samples=500,
                 rng=rng,
             )
 

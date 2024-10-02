@@ -38,7 +38,7 @@ if __name__ == "__main__":
     if not os.path.exists(fig_dir):
         os.makedirs(fig_dir)
 
-    num_threads = 8
+    num_threads = 16
     numba.set_num_threads(num_threads)
 
     num_sims, num_cols = 9, 3
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         
         n_samples = 1000
         n_pops = 10
-        s_length = 1e4
+        s_length = 1e5
         ne = np.linspace(1e3, 1e5, n_pops)
         island_model = msprime.Demography.island_model(ne, 1e-5 / n_pops)
         for i in range(1, n_pops):

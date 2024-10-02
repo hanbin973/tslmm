@@ -79,6 +79,7 @@ def _explicit_gradient(sigma, tau, tree_sequence, mutation_rate, y, X, subset=No
         np.dot(Ginvr.T, dGdt @ Ginvr) + 2 * dy_dt.T @ Ginvr
     return -grad_s / 2, -grad_t / 2
 
+
 def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, center_covariance=False):
     if subset is None: subset = np.arange(tree_sequence.num_individuals)
     G = _explicit_covariance_matrix(
@@ -109,7 +110,6 @@ def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X
     average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
 
     return average_information
-
 
 
 def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, predict_subset=None, center_covariance=False):
@@ -298,14 +298,6 @@ class CovarianceModel:
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
      
-    def expand_to_dim(self, x: np.ndarray, ind: np.ndarray) -> np.ndarray:
-        assert ind.size == x.shape[0]
-        data = np.ones(ind.size)
-        row_ind, col_ind = ind, np.arange(ind.size) 
-        return scipy.sparse.csr_array(
-            (data, (row_ind, col_ind)),
-            shape=(self.dim, ind.size)
-        ).dot(x)
 
 class LowRankPreconditioner:
     """
@@ -394,7 +386,9 @@ class LowRankPreconditioner:
 
 class tslmm:
     """
-    A tslmm instance to fit ARG-LMM with randomized restricted maximum likelihood (REML).
+    A tslmm instance to fit ARG-LMM with restricted maximum likelihood (REML).
+    The internal algorithms are based on RandNLA (Randomized Numerical Linear Algebra)
+    and the incremental algorithm on tree sequences.
 
     :param tskit.Treesequence ts: A tree sequence.
     :param float mutation_rate: Mutation rate.
@@ -787,6 +781,8 @@ class tslmm:
         variance_components: np.ndarray
         ):
         """
+        Set variance component parameters of ARG-LMM to a given value
+
         :param np.ndarray variance_components: `sigma^2` and `tau^2` (in this order)
         """
 
@@ -805,6 +801,8 @@ class tslmm:
         verbose: bool = True,
         ):
         """
+        Fit variance component parameters of ARG-LMM
+
         :param np.ndarray variance_components_init: Initial estimates of `sigma^2` and `tau^2` (in this order).
         :param method: Either 'adadelta' or 'ai' (average information).
         :param bool haseman_elston: Use Haseman-Elston Initialization.
@@ -837,7 +835,7 @@ class tslmm:
                     covariance=self.covariance,
                     preconditioner=self.preconditioner,
                     indices=self.phenotyped_individuals,
-                    max_iterations=max_iterations, # if variance_components is None else 0,
+                    max_iterations=max_iterations,
                     trace_samples=sgd_samples,
                     epsilon=sgd_epsilon,
                     decay=sgd_decay,
@@ -855,7 +853,7 @@ class tslmm:
                     covariance=self.covariance,
                     preconditioner=self.preconditioner,
                     indices=self.phenotyped_individuals,
-                    max_iterations=max_iterations, # if variance_components is None else 0,
+                    max_iterations=max_iterations, 
                     trace_samples=sgd_samples,
                     verbose=verbose,
                     rng=self.rng,

@@ -745,7 +745,7 @@ class tslmm:
         tree_sequence: tskit.TreeSequence,
         mutation_rate: float,
         phenotypes: np.ndarray,
-        covariates: np.ndarray,
+        covariates: np.ndarray = None,
         phenotyped_individuals: np.ndarray = None,
         preconditioner_rank: int = 20,
         preconditioner_depth: int = 5,

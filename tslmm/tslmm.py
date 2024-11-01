@@ -79,6 +79,7 @@ def _explicit_gradient(sigma, tau, tree_sequence, mutation_rate, y, X, subset=No
         np.dot(Ginvr.T, dGdt @ Ginvr) + 2 * dy_dt.T @ Ginvr
     return -grad_s / 2, -grad_t / 2
 
+
 def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, center_covariance=False):
     if subset is None: subset = np.arange(tree_sequence.num_individuals)
     G = _explicit_covariance_matrix(
@@ -109,7 +110,6 @@ def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X
     average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
 
     return average_information
-
 
 
 def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=None, predict_subset=None, center_covariance=False):
@@ -298,14 +298,6 @@ class CovarianceModel:
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
      
-    def expand_to_dim(self, x: np.ndarray, ind: np.ndarray) -> np.ndarray:
-        assert ind.size == x.shape[0]
-        data = np.ones(ind.size)
-        row_ind, col_ind = ind, np.arange(ind.size) 
-        return scipy.sparse.csr_array(
-            (data, (row_ind, col_ind)),
-            shape=(self.dim, ind.size)
-        ).dot(x)
 
 class LowRankPreconditioner:
     """
@@ -394,17 +386,18 @@ class LowRankPreconditioner:
 
 class tslmm:
     """
-    A tslmm instance to fit ARG-LMM with randomized restricted maximum likelihood (REML).
+    A tslmm instance to fit ARG-LMM with restricted maximum likelihood (REML).
+    The internal algorithms are based on RandNLA (Randomized Numerical Linear Algebra)
+    and the incremental algorithm on tree sequences.
 
     :param tskit.Treesequence ts: A tree sequence.
     :param float mutation_rate: Mutation rate.
     :param np.ndarray phenotypes: Array storing phenotypes.
     :param np.ndarray covariates: Fixed effects covariates.
     :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
-    :param np.ndarray variance_components: Initial estimates of `sigma` and `tau`.
-    :param initialization: Initialization method. Either `None` or `he` (Haseman-Elston regression).
-    :param quadratic: Average information for optimization. Either `None` or `ai` (average information).
-
+    :param int preconditioner_rank: The rank of the preconditioner.
+    :param int preconditioner_depth: Number of power iterations to make the preconditioner.
+    :param rng: Random number generator
     """
 
     @staticmethod
@@ -457,17 +450,23 @@ class tslmm:
         residuals = y - X @ fixed_effects
         Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices)
 
+        # gradient incredients
+        Xt_Ginv_dGds_Ginv_X = Xt_Ginv @ _dGds(Xt_Ginv.T)
+        Xt_Ginv_dGdt_Ginv_X = Xt_Ginv @ _dGdt(Xt_Ginv.T)
+        dGds_Ginv_r = _dGds(Ginv_r)
+        dGdt_Ginv_r = _dGdt(Ginv_r)
+
         # d(sigma)
         Ginv_dGds_trace, _ = trace_estimator(_Ginv_dGds_trace, dim, trace_samples, rng=rng)
-        dGds_Ginv_r = _dGds(Ginv_r)
         ytP_dGds_Py = np.dot(dGds_Ginv_r, Ginv_r) # Ginv_r = Py
-        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py
+        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py - (Xt_Ginv_dGds_Ginv_X * Xt_Ginv_X_inv).sum()
 
         # d(tau)
         Ginv_dGdt_trace, _ = trace_estimator(_Ginv_dGdt_trace, dim, trace_samples, rng=rng)
-        dGdt_Ginv_r = _dGdt(Ginv_r)
         ytP_dGdt_Py = np.dot(dGdt_Ginv_r, Ginv_r) # Ginv_r = Py
-        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py
+        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py - (Xt_Ginv_dGdt_Ginv_X * Xt_Ginv_X_inv).sum()
+
+        # gradient
         gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
 
         # information ingredients
@@ -748,33 +747,16 @@ class tslmm:
     # ------ API ------ #
 
     def __init__(
-        self, 
-        tree_sequence: tskit.TreeSequence, 
+        self,
+        tree_sequence: tskit.TreeSequence,
         mutation_rate: float,
-        phenotypes: np.ndarray, 
-        covariates: np.ndarray = None, 
+        phenotypes: np.ndarray,
+        covariates: np.ndarray = None,
         phenotyped_individuals: np.ndarray = None,
-        variance_components: np.ndarray = None,
-        sgd_iterations: int = 50,  # TODO: use a stopping criterion
-        sgd_decay: float = 0.1,
-        sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
-        sgd_samples: int = 50,
-        sgd_verbose: bool = True,
         preconditioner_rank: int = 20,
         preconditioner_depth: int = 5,
         rng: np.random.Generator = None,
-        initialization = None,
-        quadratic = None
     ):
-        """         
-        NB: `variance_components` are assumed fixed if provided; otherwise stochastic
-        gradient descent is used to fit the model via REML.
-
-        NB: `covariates` should not contain an intercept, as this is unidentifiable
-        with the current GRM
-        """
-        
-
         if rng is None: rng = np.random.default_rng()
 
         if phenotyped_individuals is None:
@@ -798,49 +780,92 @@ class tslmm:
                 indices=self.phenotyped_individuals,
                 rng=rng,
             )
-        if initialization == "he":
-            variance_components = self._haseman_elston_regression(
+        self.rng = rng 
+
+    def set_variance_components(
+        self,
+        variance_components: np.ndarray
+        ):
+        """
+        Set variance component parameters of ARG-LMM to a given value
+
+        :param np.ndarray variance_components: `sigma^2` and `tau^2` (in this order)
+        """
+
+        self.fit_variance_components(variance_components, max_iterations=0)
+
+    def fit_variance_components(
+        self, 
+        variance_components_init: np.ndarray = None,
+        method: str = 'adadelta', 
+        haseman_elston: bool = False, 
+        haseman_elston_samples: int = 200,
+        max_iterations: int = 50,
+        sgd_samples: int = 50,
+        sgd_decay: float = 0.1, # 
+        sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
+        verbose: bool = True,
+        ):
+        """
+        Fit variance component parameters of ARG-LMM
+
+        :param np.ndarray variance_components_init: Initial estimates of `sigma^2` and `tau^2` (in this order).
+        :param method: Either 'adadelta' or 'ai' (average information).
+        :param bool haseman_elston: Use Haseman-Elston Initialization.
+        :param int haseman_elston_samples: Number of test vectors for Haseman-Elston regression.
+        :param int max_iterations: Max iterations of the optimization.
+        :param int sgd_samples: Number of test vectors for gradient estimation.
+        :param float sgd_decay: Decay parameter of AdaDelta.
+        :param float sgd_epsilon: Epsilon parameter of AdaDelta.
+        :param bool verbose: Print intermediate parameters.
+        """
+
+        if haseman_elston:
+            variance_components_init = self._haseman_elston_regression(
                 phenotypes=self.phenotypes,
                 covariates=self.covariates,
                 covariance=self.covariance,
                 indices=self.phenotyped_individuals,
-                trace_samples=500,
-                rng=rng,
+                trace_samples=haseman_elston_samples,
+                rng=self.rng,
             )
 
         self._optimization_trajectory = []
-        if quadratic == "ai":
-            self.variance_components, self.fixed_effects, self.residuals = \
-                self._reml_stochastic_optimize_ai(
-                    starting_values=variance_components,
-                    phenotypes=self.phenotypes,
-                    covariates=self.covariates,
-                    covariance=self.covariance,
-                    preconditioner=self.preconditioner,
-                    indices=self.phenotyped_individuals,
-                    max_iterations=sgd_iterations, # if variance_components is None else 0,
-                    trace_samples=sgd_samples,
-                    verbose=sgd_verbose,
-                    rng=rng,
-                    callback=lambda x: self._optimization_trajectory.append(x),
-                )
-        else:
+        callback_fn = lambda x: self._optimization_trajectory.append(x)
+        if method == 'adadelta':
             self.variance_components, self.fixed_effects, self.residuals = \
                 self._reml_stochastic_optimize(
-                    starting_values=variance_components,
+                    starting_values=variance_components_init,
                     phenotypes=self.phenotypes,
                     covariates=self.covariates,
                     covariance=self.covariance,
                     preconditioner=self.preconditioner,
                     indices=self.phenotyped_individuals,
-                    max_iterations=sgd_iterations, # if variance_components is None else 0,
+                    max_iterations=max_iterations,
                     trace_samples=sgd_samples,
                     epsilon=sgd_epsilon,
                     decay=sgd_decay,
-                    verbose=sgd_verbose,
-                    rng=rng,
-                    callback=lambda x: self._optimization_trajectory.append(x),
+                    verbose=verbose,
+                    rng=self.rng,
+                    callback=callback_fn,
                 )
+
+        if method == "ai":
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize_ai(
+                    starting_values=variance_components_init,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=max_iterations, 
+                    trace_samples=sgd_samples,
+                    verbose=verbose,
+                    rng=self.rng,
+                    callback=callback_fn,
+                )
+        
 
     def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None):
         """

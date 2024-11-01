@@ -59,7 +59,8 @@ if __name__ == "__main__":
     mu = 1e-10
     traits, covariates, fixef = simulate(*varcov, ts, mu, rng=rng)
 
-    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, variance_components=np.ones(2), rng=rng)
+    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+    lmm.set_variance_components(variance_components=np.ones(2))
     direction = np.array([1.0, 0.4])
     grid = np.linspace(-1.0, 1.0, 20)
     est_average_information = np.empty((grid.size, 4))

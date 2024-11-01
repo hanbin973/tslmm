@@ -450,17 +450,23 @@ class tslmm:
         residuals = y - X @ fixed_effects
         Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices)
 
+        # gradient incredients
+        Xt_Ginv_dGds_Ginv_X = Xt_Ginv @ _dGds(Xt_Ginv.T)
+        Xt_Ginv_dGdt_Ginv_X = Xt_Ginv @ _dGdt(Xt_Ginv.T)
+        dGds_Ginv_r = _dGds(Ginv_r)
+        dGdt_Ginv_r = _dGdt(Ginv_r)
+
         # d(sigma)
         Ginv_dGds_trace, _ = trace_estimator(_Ginv_dGds_trace, dim, trace_samples, rng=rng)
-        dGds_Ginv_r = _dGds(Ginv_r)
         ytP_dGds_Py = np.dot(dGds_Ginv_r, Ginv_r) # Ginv_r = Py
-        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py
+        sigma_grad = Ginv_dGds_trace - ytP_dGds_Py - (Xt_Ginv_dGds_Ginv_X * Xt_Ginv_X_inv).sum()
 
         # d(tau)
         Ginv_dGdt_trace, _ = trace_estimator(_Ginv_dGdt_trace, dim, trace_samples, rng=rng)
-        dGdt_Ginv_r = _dGdt(Ginv_r)
         ytP_dGdt_Py = np.dot(dGdt_Ginv_r, Ginv_r) # Ginv_r = Py
-        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py
+        tau_grad = Ginv_dGdt_trace - ytP_dGdt_Py - (Xt_Ginv_dGdt_Ginv_X * Xt_Ginv_X_inv).sum()
+
+        # gradient
         gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
 
         # information ingredients

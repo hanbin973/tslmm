@@ -635,6 +635,8 @@ class tslmm:
         trace_samples: int = 10, 
         min_value: float = 1e-4,
         max_iterations: int = 100,
+        stop_rtol: int = 5e-2,
+        max_stop_counter: int = 15,
         verbose: bool = True,
         callback: Callable = None,
         rng: np.random.Generator = None, 
@@ -659,11 +661,12 @@ class tslmm:
             starting_values = np.clip(starting_values, min_value, np.inf)
             starting_values = np.sqrt(starting_values) / scale
         
-        # AdaDelta (https://arxiv.org/pdf/1212.5701)
+        # Average-information REML
         state = np.power(starting_values, 2)
-        running_mean = state
+        running_mean = state.copy()
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
+        stop_counter = 0
         if callback is not None: callback(running_mean * np.power(scale, 2))
         for itt in range(max_iterations):
             gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
@@ -672,9 +675,12 @@ class tslmm:
             )
             state += np.linalg.solve(average_information, gradient)
             state = np.clip(state, min_value, np.inf)  # force positive
-            running_mean = state
+            rel_change = np.abs((state - running_mean) / running_mean)
+            if np.all(rel_change < stop_rtol): stop_counter += 1
+            running_mean = state.copy()
             if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}, {np.linalg.norm(gradient)}")
             if callback is not None: callback(running_mean * np.power(scale, 2))
+            if stop_counter > max_stop_counter: break 
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
@@ -801,7 +807,8 @@ class tslmm:
         haseman_elston: bool = False, 
         haseman_elston_samples: int = 200,
         max_iterations: int = 50,
-        sgd_samples: int = 50,
+        max_stop_counter: int = 15,
+        sgd_samples: int = 100,
         sgd_decay: float = 0.1, # 
         sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
         verbose: bool = True,
@@ -814,6 +821,7 @@ class tslmm:
         :param bool haseman_elston: Use Haseman-Elston Initialization.
         :param int haseman_elston_samples: Number of test vectors for Haseman-Elston regression.
         :param int max_iterations: Max iterations of the optimization.
+        :param int max_stop_counter: Stop optimization when stop counter hits this number.
         :param int sgd_samples: Number of test vectors for gradient estimation.
         :param float sgd_decay: Decay parameter of AdaDelta.
         :param float sgd_epsilon: Epsilon parameter of AdaDelta.
@@ -865,7 +873,26 @@ class tslmm:
                     rng=self.rng,
                     callback=callback_fn,
                 )
-        
+            # average over past iterations
+            avg_variance_components = np.vstack(
+                    self._optimization_trajectory[-max_stop_counter:]
+                    ).mean(axis=0)
+            self._optimization_trajectory.append(avg_variance_components)
+            print(f"Final value: {avg_variance_components.round(4)}")
+            self.variance_components, self.fixed_effects, self.residuals = \
+                self._reml_stochastic_optimize_ai(
+                    starting_values=avg_variance_components,
+                    phenotypes=self.phenotypes,
+                    covariates=self.covariates,
+                    covariance=self.covariance,
+                    preconditioner=self.preconditioner,
+                    indices=self.phenotyped_individuals,
+                    max_iterations=0, 
+                    trace_samples=sgd_samples,
+                    verbose=verbose,
+                    rng=self.rng,
+                    callback=callback_fn,
+                )
 
     def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None):
         """

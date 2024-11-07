@@ -878,7 +878,7 @@ class tslmm:
                     self._optimization_trajectory[-max_stop_counter:]
                     ).mean(axis=0)
             self._optimization_trajectory.append(avg_variance_components)
-            print(f"Final value: {avg_variance_components.round(4)}")
+            if verbose: print(f"Final variance component values: {avg_variance_components.round(4)}")
             self.variance_components, self.fixed_effects, self.residuals = \
                 self._reml_stochastic_optimize_ai(
                     starting_values=avg_variance_components,

@@ -14,13 +14,13 @@ $\mathbf{u} \sim \mathcal{N}\left(\mathbf{0}, Q_{\mathbf{u}}^{-1}\right)$ where 
 To use the program, first declare the `tslmm` object.
 ```
 import numpy as np
-from tslmm.tslmm import tslmm
+from tslmm.tslmm import TSLMM 
 
 mutation_rate = 1e-10
 rng = np.random.default_rng()
 # define tslmm object
 # trait: 1d np.ndarray, covariates: 2d np.ndarray
-lmm = tslmm(ts, mutation_rate, traits, covariates, rng)
+lmm = TSLMM(ts, mutation_rate, traits, covariates, rng)
 
 # fit variance component
 lmm.fit_variance_components(method='ai', haseman_elston=True, verbose=True)

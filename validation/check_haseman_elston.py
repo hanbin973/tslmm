@@ -7,7 +7,7 @@ import numpy as np
 import numba
 import msprime
 
-from tslmm.tslmm import tslmm
+from tslmm.tslmm import TSLMM
 from tslmm.tslmm import _explicit_reml, _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
@@ -69,10 +69,10 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
         lmm.fit_variance_components(method='adadelta', haseman_elston=False, verbose=True,)
         trajectory = lmm._optimization_trajectory
-        lmm_he = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm_he = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
         lmm_he.fit_variance_components(method='adadelta', haseman_elston=True, verbose=True,)
         trajectory_he = lmm_he._optimization_trajectory
 

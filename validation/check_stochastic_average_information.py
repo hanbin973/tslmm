@@ -7,7 +7,7 @@ import numba
 import numpy as np
 import msprime
 
-from tslmm.tslmm import tslmm
+from tslmm.tslmm import TSLMM 
 from tslmm.tslmm import _explicit_gradient, _explicit_covariance_matrix, _explicit_average_information
 
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     mu = 1e-10
     traits, covariates, fixef = simulate(*varcov, ts, mu, rng=rng)
 
-    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+    lmm = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
     lmm.set_variance_components(variance_components=np.ones(2))
     direction = np.array([1.0, 0.4])
     grid = np.linspace(-1.0, 1.0, 20)

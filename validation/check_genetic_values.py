@@ -8,7 +8,7 @@ import numpy as np
 import msprime
 import scipy
 
-from tslmm.tslmm import tslmm
+from tslmm.tslmm import TSLMM
 from tslmm.tslmm import _explicit_covariance_matrix, _explicit_posterior
 
 import matplotlib.pyplot as plt
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     traits, covariates, fixef, genetic_values = simulate(*varcov, ts, mu, rng=rng)
 
     num_samples=100
-    lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+    lmm = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
     lmm.set_variance_components(variance_components=varcov,)
     blups, var_blups = lmm.predict(np.arange(ts.num_individuals), variance_samples=num_samples)
 

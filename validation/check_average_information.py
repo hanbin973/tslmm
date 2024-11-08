@@ -7,7 +7,7 @@ import numpy as np
 import numba
 import msprime
 
-from tslmm.tslmm import tslmm
+from tslmm.tslmm import TSLMM
 from tslmm.tslmm import _explicit_reml, _explicit_covariance_matrix
 
 import matplotlib.pyplot as plt
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     numba.set_num_threads(num_threads)
 
     num_sims, num_cols = 9, 3
-    num_rows = int(num_sims / num_cols)
+    num_rows = int(num_sims / num_cols + 1e-5)
     len_unit = 3
     fig, ax = plt.subplots(num_rows, num_cols, figsize=(len_unit * num_cols, len_unit * num_rows))
     for i_sim in range(num_sims):
@@ -69,11 +69,11 @@ if __name__ == "__main__":
         mu = 1e-10
         traits, covariates = simulate(*varcov, ts, mu, rng=rng)
         
-        lmm = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
         lmm.fit_variance_components(method='adadelta', haseman_elston=True, verbose=True,)
         trajectory = lmm._optimization_trajectory
 
-        lmm_ai = tslmm(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
+        lmm_ai = TSLMM(ts, mu, traits[subset], covariates[subset], phenotyped_individuals=subset, rng=rng)
         lmm_ai.fit_variance_components(method='ai', haseman_elston=True, verbose=True,)
         trajectory_ai = lmm_ai._optimization_trajectory
 

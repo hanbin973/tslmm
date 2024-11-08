@@ -384,7 +384,7 @@ class LowRankPreconditioner:
         return x
 
 
-class tslmm:
+class TSLMM:
     """
     A tslmm instance to fit ARG-LMM with restricted maximum likelihood (REML).
     The internal algorithms are based on RandNLA (Randomized Numerical Linear Algebra)

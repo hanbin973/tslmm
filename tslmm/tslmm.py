@@ -597,7 +597,7 @@ class TSLMM:
         if callback is not None: callback(np.power(scale * running_mean, 2))
         for itt in range(max_iterations):
             state = np.clip(state, min_value, np.inf)  # force positive
-            gradient, _, _ = tslmm._reml_stochastic_gradient(
+            gradient, _, _ = TSLMM._reml_stochastic_gradient(
                 *np.power(state, 2), y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
@@ -613,7 +613,7 @@ class TSLMM:
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
-        _, fixed_effects, residuals = tslmm._reml_stochastic_gradient(
+        _, fixed_effects, residuals = TSLMM._reml_stochastic_gradient(
             *np.power(running_mean, 2), y, X, covariance, preconditioner, 
             trace_samples=trace_samples, indices=indices, rng=rng
         )
@@ -669,7 +669,7 @@ class TSLMM:
         stop_counter = 0
         if callback is not None: callback(running_mean * np.power(scale, 2))
         for itt in range(max_iterations):
-            gradient, _, _, average_information = tslmm._reml_stochastic_average_information( # change to gradient
+            gradient, _, _, average_information = TSLMM._reml_stochastic_average_information( # change to gradient
                 *state, y, X, covariance, preconditioner, 
                 trace_samples=trace_samples, indices=indices, rng=rng,
             )
@@ -684,7 +684,7 @@ class TSLMM:
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
-        _, fixed_effects, residuals, _ = tslmm._reml_stochastic_average_information( # change to gradient for rollback
+        _, fixed_effects, residuals, _ = TSLMM._reml_stochastic_average_information( # change to gradient for rollback
             *running_mean, y, X, covariance, preconditioner, 
             trace_samples=trace_samples, indices=indices, rng=rng
         )

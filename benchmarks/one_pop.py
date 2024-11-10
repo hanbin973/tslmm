@@ -12,7 +12,7 @@ popsize_changes = [
 ] + [(100, 100), ]
 model = stdpopsim.PiecewiseConstantSize(species.population_size, *popsize_changes)
 
-samples = {"pop_0": 100000}
+samples = {"pop_0": 200000}
 
 ts = engine.simulate(model, contig, samples, slim_burn_in=1000)
 

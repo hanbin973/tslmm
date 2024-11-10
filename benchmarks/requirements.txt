@@ -2,3 +2,4 @@ stdpopsim
 slim
 msprime
 pyslim
+tstrait

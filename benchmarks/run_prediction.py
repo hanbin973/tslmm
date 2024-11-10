@@ -28,33 +28,38 @@ def parse_args():
                         help="SD of genomic effects (per mutation per generation)")
     parser.add_argument('--pcg_rank', '-R', type=int, default=10,
                         help="Rank of preconditioner")
+    parser.add_argument('--num_covariates', '-C', type=int, default=0,
+                        help="Number of covariates for simulated traits")
     parser.add_argument('--seed', '-S', type=int, required=True,
                         help="Random seed")
     return parser
 
-def simulate(sigma2, tau2, ts, mutation_rate, rng=None):
+def simulate(sigma2, tau2, tree_sequence, mutation_rate, 
+             num_covariates=0, rng=None):
     """
     float sigma2: non-genetic variance, i.e., residual
     float tau2: genetic variance
-    tskit.TreeSequence ts: tree sequence
+    tskit.TreeSequence tree_sequence: tree sequence
     float mutation_rate: mutation rate (e.g. 1e-8)
     np.random.Generator rng: numpy random number generator
     """
     if rng is None: rng = np.random.default_rng()
-    G = tslmm.tslmm._explicit_covariance_matrix(
-        0, tau2, ts, mutation_rate, 
-    )
-    U = np.linalg.cholesky(G)
-    g = U @ rng.normal(size=ts.num_individuals) # genetic value 
-    e = rng.normal(size=ts.num_individuals) * np.sqrt(sigma2) # residual
+    X = rng.normal(size=(tree_sequence.num_individuals, num_covariates)) # covariates
+    g = tslmm.simulations.sim_genetic_value(tree_sequence) * np.sqrt(mutation_rate * tau2) # genetic value 
+    e = rng.normal(size=tree_sequence.num_individuals) * np.sqrt(sigma2) # residual
+    b = rng.normal(size=5) # fixed effect size
     y = g + e # trait value
-    return y, g
-
+    if num_covariates > 0:
+        y += X @ b
+    return y, X, b, g
 
 if __name__ == "__main__":
     mu = 1e-8
     parser = parse_args()
     args = parser.parse_args(sys.argv[1:])
+
+    if args.num_covariates > 0:
+        raise ValueError("This does not properly use covariates yet!")
 
     num_indivs = args.num_indivs
     prop_observed = args.prop_observed
@@ -88,18 +93,20 @@ if __name__ == "__main__":
     # determine heritability
     start_time = time.time()
 
-    _, y_bar = simulate(sigma2=0, tau2=tau**2, ts=ts, mutation_rate=mu, rng=rng)
+    _, _, _, y_bar = simulate(sigma2=0, tau2=tau**2, tree_sequence=ts, mutation_rate=mu,
+                              num_covariates=args.num_covariates, rng=rng)
     yv = np.var(y_bar)
     sigma = np.sqrt(yv * (1 - heritability) / heritability)
-    y, y_bar = simulate(sigma2=sigma**2, tau2=tau**2, ts=ts, mutation_rate=mu, rng=rng)
-    assert len(y) == num_indivs
-    y_obs = y[ind_obs]
+    y, X, b, y_bar = simulate(sigma2=sigma**2, tau2=tau**2, tree_sequence=ts, mutation_rate=mu,
+                              num_covariates=args.num_covariates, rng=rng)
     sim_time = time.time() - start_time
     print(f"Simulation done (twice) in {sim_time:.2f} seconds, with sigma={sigma}.")
     print(f"Trait SD: {np.std(y):.2f}; trait minus genetic value SD: {np.std(y - y_bar):.2f}")
 
-    covariates = np.ones(len(y_obs), dtype='float').reshape((len(y_obs), 1))
-    lmm = tslmm.TSLMM(ts, mu, y_obs, covariates, phenotyped_individuals=ind_obs, rng=rng,
+    assert len(y) == num_indivs
+    y_obs = y[ind_obs]
+    X_obs = X[ind_obs, :]
+    lmm = tslmm.TSLMM(ts, mu, y_obs, X_obs, phenotyped_individuals=ind_obs, rng=rng,
                       preconditioner_rank=args.pcg_rank)
 
     #############

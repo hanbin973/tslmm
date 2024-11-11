@@ -99,28 +99,3 @@ num_edges_colorbar(ax3)
 
 plt.tight_layout()
 plt.savefig(fname)
-
-# # iterations
-# fname = os.path.join(basedir, "timing_and_iterations.pdf")
-# fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(9, 5))
-# 
-# ax0.set_xlabel("number of edges")
-# ax0.set_ylabel("number of PCG iterations")
-# ax1.set_xlabel("number of individuals")
-# ax1.set_ylabel("runtime (s)")
-# for rx, sub_df in df.groupby('pcg_rank'):
-#     ax0.scatter(sub_df.num_edges, sub_df.pcg_iter,
-#                 label=f"PCG rank={rx}",
-#                 marker=pcg_rank_markers[rx],
-#                 c=num_indivs_c(sub_df.num_indivs))
-#     ax1.scatter(sub_df.num_edges, sub_df.pred_time,
-#                 label=f"PCG rank={rx}",
-#                 marker=pcg_rank_markers[rx],
-#                 c=num_indivs_c(sub_df.num_indivs))
-# 
-# num_indivs_colorbar(ax0)
-# ax1.legend()
-# 
-# 
-# plt.tight_layout()
-# plt.savefig(fname)

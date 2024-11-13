@@ -359,3 +359,35 @@ def sim_genetic_value(ts, **kwargs):
     
     return g_individuals
 
+def sim_genetic_value_parallel(ts, num_traits, **kwargs):
+    def bincount_fn(w):
+        return np.bincount(samples_individuals, w)
+    rv = TraitVectorParallel(
+        ts.num_nodes,
+        samples=ts.samples(),
+        nodes_time=ts.nodes_time,
+        edges_left=ts.edges_left,
+        edges_right=ts.edges_right,
+        edges_parent=ts.edges_parent,
+        edges_child=ts.edges_child,
+        edge_insertion_order=ts.indexes_edge_insertion_order,
+        edge_removal_order=ts.indexes_edge_removal_order,
+        sequence_length=ts.sequence_length,
+        num_traits=num_traits,
+        **kwargs,
+    )
+    # sample genetic values
+    g_samples = rv.run()
+    # sample - individual assignment
+    individuals = [i.id for i in ts.individuals()]
+    samples_individuals = np.vstack([
+        [n,k]
+        for k, i in enumerate(individuals)
+        for n in ts.individual(i).nodes])[:,1]
+    # aggregate sample values to individuals
+    g_individuals = np.apply_along_axis(
+            bincount_fn, axis=0, arr=g_samples
+            )
+    
+    return g_individuals
+

@@ -107,7 +107,7 @@ def _explicit_average_information(sigma, tau, tree_sequence, mutation_rate, y, X
     I_ss = np.dot(Ginv_dGds_Ginvr, dGds_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginvr
     I_st = np.dot(Ginv_dGds_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGds_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
     I_tt = np.dot(Ginv_dGdt_Ginvr, dGdt_Ginvr) - Xt_Ginv_dGdt_Ginvr.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginvr
-    average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+    average_information = np.array([[I_ss, I_st], [I_st, I_tt]]) / 2
 
     return average_information
 
@@ -249,6 +249,7 @@ class CovarianceModel:
         maxitt: int = None, 
         atol: float = 0.0, 
         rtol: float = 1e-5,
+        centre: bool = False,
         return_info: bool = False,
     ) -> (np.ndarray, int, bool):
         r"""
@@ -273,7 +274,7 @@ class CovarianceModel:
         if not y.any(): return y, 0, True  # y == 0
         if is_vector: y = y.reshape(-1, 1)
         atol = max(atol, rtol * np.linalg.norm(y))
-        A = lambda x: self(sigma, tau, x, rows=indices, cols=indices)
+        A = lambda x: self(sigma, tau, x, rows=indices, cols=indices, centre=centre)
         M = preconditioner
         x = np.zeros_like(y)
         r = y - A(x)
@@ -342,6 +343,7 @@ class LowRankPreconditioner:
         depth: int = 1,
         indices: np.ndarray = None, 
         num_vectors: int = None, 
+        centre: bool = False,
         rng: np.random.Generator = None,
     ):
         if rng is None: rng = np.random.default_rng()
@@ -349,7 +351,7 @@ class LowRankPreconditioner:
         self.dim = covariance.dim if indices is None else indices.size
         if depth > 1:
             self.U, self.D, _ = _rand_svd(
-                lambda x: covariance(0, 1, x, rows=indices, cols=indices),
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices, centre=centre),
                 operator_dim=self.dim,
                 rank=rank,
                 depth=depth,
@@ -358,7 +360,7 @@ class LowRankPreconditioner:
             )
         else:
             self.D, self.U = self._rand_eigh(
-                lambda x: covariance(0, 1, x, rows=indices, cols=indices), 
+                lambda x: covariance(0, 1, x, rows=indices, cols=indices, centre=centre), 
                 operator_dim=self.dim, 
                 rank=rank, 
                 num_vectors=num_vectors, 
@@ -410,6 +412,7 @@ class TSLMM:
         preconditioner: LowRankPreconditioner, 
         indices: np.ndarray = None,
         trace_samples: int = 1, 
+        centre: bool = False,
         rng: np.random.Generator = None,
     ):
         """
@@ -427,13 +430,13 @@ class TSLMM:
             return test_vectors
 
         def _dGdt(test_vectors):  # d(covariance)/d(tau)
-            return covariance(0, 1, test_vectors, rows=indices, cols=indices)
+            return covariance(0, 1, test_vectors, rows=indices, cols=indices, centre=centre)
 
         def _Ginv_dGds_trace(test_vectors):
-            return covariance.solve(sigma, tau, _dGds(test_vectors), preconditioner=M, indices=indices)
+            return covariance.solve(sigma, tau, _dGds(test_vectors), preconditioner=M, indices=indices, centre=centre)
 
         def _Ginv_dGdt_trace(test_vectors):
-            return covariance.solve(sigma, tau, _dGdt(test_vectors), preconditioner=M, indices=indices)
+            return covariance.solve(sigma, tau, _dGdt(test_vectors), preconditioner=M, indices=indices, centre=centre)
 
         if rng is None: rng = np.random.default_rng()
         # TODO: trace_samples == 1 is erroring out
@@ -443,12 +446,12 @@ class TSLMM:
 
         y, X = phenotypes, covariates
         Xy = np.hstack([X, y.reshape(-1, 1)])
-        Ginv_Xy = covariance.solve(sigma, tau, Xy, preconditioner=M, indices=indices)
+        Ginv_Xy = covariance.solve(sigma, tau, Xy, preconditioner=M, indices=indices, centre=centre)
         Xt_Ginv, Ginv_y = Ginv_Xy.T[:-1], Ginv_Xy.T[-1]
         Xt_Ginv_X_inv = np.linalg.inv(Xt_Ginv @ X)
         fixed_effects = Xt_Ginv_X_inv @ X.T @ Ginv_y
         residuals = y - X @ fixed_effects
-        Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices)
+        Ginv_r = covariance.solve(sigma, tau, residuals, preconditioner=M, indices=indices, centre=centre)
 
         # gradient incredients
         Xt_Ginv_dGds_Ginv_X = Xt_Ginv @ _dGds(Xt_Ginv.T)
@@ -470,8 +473,8 @@ class TSLMM:
         gradient = np.array([-sigma_grad / 2, -tau_grad / 2])
 
         # information ingredients
-        Ginv_dGds_Ginv_r = covariance.solve(sigma, tau, dGds_Ginv_r, preconditioner=M, indices=indices)
-        Ginv_dGdt_Ginv_r = covariance.solve(sigma, tau, dGdt_Ginv_r, preconditioner=M, indices=indices)
+        Ginv_dGds_Ginv_r = covariance.solve(sigma, tau, dGds_Ginv_r, preconditioner=M, indices=indices, centre=centre)
+        Ginv_dGdt_Ginv_r = covariance.solve(sigma, tau, dGdt_Ginv_r, preconditioner=M, indices=indices, centre=centre)
         Xt_Ginv_dGds_Ginv_r = X.T @ Ginv_dGds_Ginv_r
         Xt_Ginv_dGdt_Ginv_r = X.T @ Ginv_dGdt_Ginv_r
 
@@ -479,7 +482,7 @@ class TSLMM:
         I_ss = np.dot(Ginv_dGds_Ginv_r, dGds_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGds_Ginv_r
         I_st = np.dot(Ginv_dGds_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGds_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
         I_tt = np.dot(Ginv_dGdt_Ginv_r, dGdt_Ginv_r) - Xt_Ginv_dGdt_Ginv_r.T @ Xt_Ginv_X_inv @ Xt_Ginv_dGdt_Ginv_r
-        average_information = np.array([[I_ss, I_st], [I_st, I_tt]])
+        average_information = np.array([[I_ss, I_st], [I_st, I_tt]]) / 2
 
         return gradient, fixed_effects, residuals, average_information
 
@@ -637,6 +640,7 @@ class TSLMM:
         max_iterations: int = 100,
         stop_rtol: int = 5e-2,
         max_stop_counter: int = 15,
+        centre: bool = False,
         verbose: bool = True,
         callback: Callable = None,
         rng: np.random.Generator = None, 
@@ -667,13 +671,15 @@ class TSLMM:
         numerator = np.zeros(state.size)
         denominator = np.zeros(state.size)
         stop_counter = 0
+        step_size = 1
         if callback is not None: callback(running_mean * np.power(scale, 2))
         for itt in range(max_iterations):
+            if itt > 4: step_size = 0.5
             gradient, _, _, average_information = TSLMM._reml_stochastic_average_information( # change to gradient
                 *state, y, X, covariance, preconditioner, 
-                trace_samples=trace_samples, indices=indices, rng=rng,
+                trace_samples=trace_samples, indices=indices, centre=centre, rng=rng,
             )
-            state += np.linalg.solve(average_information, gradient)
+            state += step_size * np.linalg.solve(average_information, gradient)
             state = np.clip(state, min_value, np.inf)  # force positive
             rel_change = np.abs((state - running_mean) / running_mean)
             if np.all(rel_change < stop_rtol): stop_counter += 1
@@ -684,16 +690,17 @@ class TSLMM:
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
 
-        _, fixed_effects, residuals, _ = TSLMM._reml_stochastic_average_information( # change to gradient for rollback
+        _, fixed_effects, residuals, average_information = TSLMM._reml_stochastic_average_information( # change to gradient for rollback
             *running_mean, y, X, covariance, preconditioner, 
-            trace_samples=trace_samples, indices=indices, rng=rng
+            trace_samples=trace_samples, indices=indices, centre=centre, rng=rng
         )
         fixed_effects = np.linalg.solve(R, fixed_effects) * scale
         running_mean *= np.power(scale, 2)
         residuals *= scale
         residuals += mean
+        inverse_average_information = np.linalg.inv(average_information) * np.power(scale, 2)
 
-        return running_mean, fixed_effects, residuals
+        return running_mean, fixed_effects, residuals, inverse_average_information
 
     @staticmethod
     def _haseman_elston_regression(
@@ -759,8 +766,9 @@ class TSLMM:
         phenotypes: np.ndarray,
         covariates: np.ndarray = None,
         phenotyped_individuals: np.ndarray = None,
-        preconditioner_rank: int = 20,
+        preconditioner_rank: int = 50,
         preconditioner_depth: int = 5,
+        centre: bool = False,
         rng: np.random.Generator = None,
     ):
         if rng is None: rng = np.random.default_rng()
@@ -784,8 +792,10 @@ class TSLMM:
                 depth=preconditioner_depth,
                 num_vectors= 2 * preconditioner_rank, 
                 indices=self.phenotyped_individuals,
+                centre=centre,
                 rng=rng,
             )
+        self.centre = centre
         self.rng = rng 
 
     def set_variance_components(
@@ -843,7 +853,7 @@ class TSLMM:
         if method == 'adadelta':
             self.variance_components, self.fixed_effects, self.residuals = \
                 self._reml_stochastic_optimize(
-                    starting_values=variance_components_init,
+                    startingvalues=variance_components_init,
                     phenotypes=self.phenotypes,
                     covariates=self.covariates,
                     covariance=self.covariance,
@@ -859,7 +869,7 @@ class TSLMM:
                 )
 
         if method == "ai":
-            self.variance_components, self.fixed_effects, self.residuals = \
+            self.variance_components, _, _, _ = \
                 self._reml_stochastic_optimize_ai(
                     starting_values=variance_components_init,
                     phenotypes=self.phenotypes,
@@ -869,6 +879,7 @@ class TSLMM:
                     indices=self.phenotyped_individuals,
                     max_iterations=max_iterations, 
                     trace_samples=sgd_samples,
+                    centre=self.centre,
                     verbose=verbose,
                     rng=self.rng,
                     callback=callback_fn,
@@ -879,7 +890,7 @@ class TSLMM:
                     ).mean(axis=0)
             self._optimization_trajectory.append(avg_variance_components)
             if verbose: print(f"Final variance component values: {avg_variance_components.round(4)}")
-            self.variance_components, self.fixed_effects, self.residuals = \
+            self.variance_components, self.fixed_effects, self.residuals, self.inverse_average_information = \
                 self._reml_stochastic_optimize_ai(
                     starting_values=avg_variance_components,
                     phenotypes=self.phenotypes,
@@ -889,6 +900,7 @@ class TSLMM:
                     indices=self.phenotyped_individuals,
                     max_iterations=0, 
                     trace_samples=sgd_samples,
+                    centre=self.centre,
                     verbose=verbose,
                     rng=self.rng,
                     callback=callback_fn,

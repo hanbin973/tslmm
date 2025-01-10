@@ -4,19 +4,17 @@ import numpy as np
 import scipy.sparse
 import numba
 from typing import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 from tslmm.trace_estimators import xtrace, hutchinson, xdiag
 from tslmm.tspca import _rand_svd
 from tslmm.operations import split_upwards
 from tslmm.matrices import edge_individual_matrix, edge_adjacency
 
-
-
 _i1r = numba.types.Array(numba.types.int32, 1, 'C', readonly=True)
 _f1r = numba.types.Array(numba.types.float64, 1, 'C', readonly=True)
 _f2r = numba.types.Array(numba.types.float64, 2, 'C', readonly=True)
 _f2w = numba.types.Array(numba.types.float64, 2, 'C', readonly=False)
-
 
 # --- for testing --- #
 
@@ -136,13 +134,34 @@ def _explicit_posterior(sigma, tau, tree_sequence, mutation_rate, y, X, subset=N
 
 # --- linear operators --- #
 
+def _genetic_relatedness_vector(
+        ts: tskit.TreeSequence,
+        W: np.ndarray,
+        num_threads: int = None,
+        ) -> np.ndarray:
+
+    if num_threads is None:
+        num_threads = numba.get_num_threads()
+
+    chunks = np.linspace(0, ts.sequence_length, num_threads + 1)
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [
+                executor.submit(
+                    ts.genetic_relatedness_vector,
+                    *(W, chunks[i:i+2], "branch", True, False, None)
+                    )
+                for i in range(num_threads)
+                ]
+        results = [future.result()[0] for future in futures]
+    return np.sum(results, axis=0)
+
 def genetic_relatedness_vector(
-        ts: tskit.Treesequence,
+        ts: tskit.TreeSequence,
         arr: np.ndarray,
         rows: np.ndarray,
         cols: np.ndarray,
         centre: bool = False,
-        windows = None,
+        num_threads: int = None,
         ) -> np.ndarray:
     """
     Wrapper around `tskit.TreeSequence.genetic_relatedness_vector` to support centering in respect to individuals.
@@ -153,7 +172,6 @@ def genetic_relatedness_vector(
     :param numpy.ndarray rows: Index of rows of the genetic relatedness matrix to be selected.
     :param numpy.ndarray cols: Index of cols of the genetic relatedness matrix to be selected. The size should match the row length of `arr`.
     :param bool centre: Centre the genetic relatedness matrix. Centering happens respect to the `rows` and `cols`. 
-    :param windows: An increasing list of breakpoints between the windows to compute the genetic relatedness matrix in.
     :return: An array that is the matrix-array product of the genetic relatedness matrix and the array. 
     :rtype: `np.ndarray`
     """
@@ -184,7 +202,8 @@ def genetic_relatedness_vector(
     x = arr - arr.mean(axis=0) if centre else arr # centering within index in rows
     x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
     x = sample_individual_sparray(ts).dot(x)
-    x = ts.genetic_relatedness_vector(W=x, windows=windows, mode="branch", centre=False)
+    #x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False)
+    x = _genetic_relatedness_vector(ts, W=x, num_threads=num_threads)
     x = sample_individual_sparray(ts).T.dot(x)
     x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
     x = x - x.mean(axis=0) if centre else x # centering within index in cols
@@ -202,13 +221,14 @@ class CovarianceModel:
     :param float mutation_rate: Mutation rate. 
     """
        
-    def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0):
+    def __init__(self, ts: tskit.TreeSequence, mutation_rate: float = 1.0, num_threads: int = None):
         # TODO: mean centering around a subset
         self.dim = ts.num_individuals
         self.I_indices = np.arange(self.dim)
         self.mutation_rate = mutation_rate
         self.ts = ts
         self.I = scipy.sparse.eye_array(ts.num_individuals, format='csr')
+        self.num_threads = num_threads
 
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
@@ -233,7 +253,7 @@ class CovarianceModel:
         if is_vector: y = y.reshape(-1, 1)
         assert cols.size == y.shape[0], "Dimension mismatch"
         
-        x = genetic_relatedness_vector(self.ts, y, rows, cols, centre) 
+        x = genetic_relatedness_vector(self.ts, y, rows, cols, centre, self.num_threads) 
         x *= self.mutation_rate
         x = tau * x + sigma * self.I[rows] @ (self.I[cols].T @ y)
         if is_vector: x = x.squeeze()
@@ -399,7 +419,8 @@ class TSLMM:
     :param phenotyped_individuals: Index of phenotyped individuals. Used for prediction of unobserved individiuals.
     :param int preconditioner_rank: The rank of the preconditioner.
     :param int preconditioner_depth: Number of power iterations to make the preconditioner.
-    :param rng: Random number generator
+    :param int num_threads: Number of threads to use.
+    :param rng: Random number generator.
     """
 
     @staticmethod
@@ -769,6 +790,7 @@ class TSLMM:
         preconditioner_rank: int = 50,
         preconditioner_depth: int = 5,
         centre: bool = False,
+        num_threads: int = None,
         rng: np.random.Generator = None,
     ):
         if rng is None: rng = np.random.default_rng()
@@ -784,7 +806,7 @@ class TSLMM:
         self.phenotyped_individuals = phenotyped_individuals
         self.covariates = covariates
         self.phenotypes = phenotypes
-        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate)
+        self.covariance = CovarianceModel(tree_sequence, mutation_rate=mutation_rate, num_threads=num_threads)
         self.preconditioner = None if preconditioner_rank < 1 else \
             LowRankPreconditioner(
                 self.covariance, 
@@ -853,7 +875,7 @@ class TSLMM:
         if method == 'adadelta':
             self.variance_components, self.fixed_effects, self.residuals = \
                 self._reml_stochastic_optimize(
-                    startingvalues=variance_components_init,
+                    starting_values=variance_components_init,
                     phenotypes=self.phenotypes,
                     covariates=self.covariates,
                     covariance=self.covariance,

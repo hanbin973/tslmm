@@ -140,9 +140,6 @@ def _genetic_relatedness_vector(
         num_threads: int = None,
         ) -> np.ndarray:
 
-    if num_threads is None:
-        num_threads = numba.get_num_threads()
-
     chunks = np.linspace(0, ts.sequence_length, num_threads + 1)
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = [
@@ -800,6 +797,9 @@ class TSLMM:
 
         if covariates is None:  # TODO but not identifiable w/ intercept
             covariates = np.ones((phenotyped_individuals.size, 1))
+
+        if num_threads is None:
+            num_threads = numba.get_num_threads()
 
         assert phenotyped_individuals.size == phenotypes.size == covariates.shape[0]
 

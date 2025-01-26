@@ -610,6 +610,7 @@ class TSLMM:
         else:
             starting_values = np.clip(starting_values, min_value, np.inf)
             starting_values = np.sqrt(starting_values) / scale
+            
         # AdaDelta (https://arxiv.org/pdf/1212.5701)
         state = starting_values
         running_mean = state
@@ -784,10 +785,10 @@ class TSLMM:
         phenotypes: np.ndarray,
         covariates: np.ndarray = None,
         phenotyped_individuals: np.ndarray = None,
-        preconditioner_rank: int = 50,
-        preconditioner_depth: int = 5,
+        preconditioner_rank: int = 500,
+        preconditioner_depth: int = 1,
         centre: bool = False,
-        num_threads: int = None,
+        num_threads: int = 1,
         rng: np.random.Generator = None,
     ):
         if rng is None: rng = np.random.default_rng()
@@ -797,9 +798,6 @@ class TSLMM:
 
         if covariates is None:  # TODO but not identifiable w/ intercept
             covariates = np.ones((phenotyped_individuals.size, 1))
-
-        if num_threads is None:
-            num_threads = numba.get_num_threads()
 
         assert phenotyped_individuals.size == phenotypes.size == covariates.shape[0]
 
@@ -830,17 +828,17 @@ class TSLMM:
         :param np.ndarray variance_components: `sigma^2` and `tau^2` (in this order)
         """
 
-        self.fit_variance_components(variance_components, max_iterations=0)
+        self.fit_variance_components(variance_components, max_iterations = 0)
 
     def fit_variance_components(
         self, 
         variance_components_init: np.ndarray = None,
         method: str = 'adadelta', 
         haseman_elston: bool = False, 
-        haseman_elston_samples: int = 200,
+        haseman_elston_samples: int = 50,
         max_iterations: int = 50,
         max_stop_counter: int = 15,
-        sgd_samples: int = 100,
+        sgd_samples: int = 50,
         sgd_decay: float = 0.1, # 
         sgd_epsilon: float = 1e-4,  # if this is too large SGD will diverge
         verbose: bool = True,

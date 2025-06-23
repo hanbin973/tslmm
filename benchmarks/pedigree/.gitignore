@@ -4,3 +4,4 @@ spatial-simulation.*.pkl
 *stderr
 chunks/
 depr/
+no-rec/

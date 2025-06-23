@@ -21,9 +21,13 @@ if __name__ == "__main__":
         help="Input prefix for tree sequences, etc",
     )
     parser.add_argument(
-        "--num-threads", type=int, default=10,
+        "--num-threads", type=int, default=50,
         help="Number of threads for inference",
     )
+    #parser.add_argument(
+    #    "--num-individuals", type=int, default=5000,
+    #    help="Number of individuals to subsample for inference",
+    #)
     parser.add_argument(
         "--overwrite", action="store_true",
         help="Overwrite all output",
@@ -43,6 +47,15 @@ if __name__ == "__main__":
     genealogies_path = args.inp_prefix + ".genealogies.trees"
     ts = tszip.decompress(genealogies_path)
     logging.info(f"Input tree sequence:\n{ts}")
+
+    ## subset individuals
+    #subset_path = args.inp_prefix + ".genealogies.subset.trees"
+    #subset = np.array([ind.nodes for ind in ts.individuals() if ind.time == 0])
+    #stride = subset.shape[0] // min(ts.num_samples * 2, args.num_individuals)
+    #subset = subset[::stride].flatten()
+    #ts = ts.simplify(samples=subset)
+    #logging.info(f"Subset tree sequence:\n{ts}")
+    #tszip.compress(ts, subset_path)
 
     # remove internal pedigree individuals, as tsinfer will choke
     sampled_individuals = \

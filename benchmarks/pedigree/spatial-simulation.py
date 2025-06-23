@@ -339,6 +339,7 @@ if __name__ == "__main__":
         )
         full_ts = msprime.sim_ancestry(
             initial_state=pedigree_ts,
+            recombination_rate=args.recombination_rate,
             population_size=population_size,
             random_seed=args.seed + 2000,
         )
@@ -536,53 +537,3 @@ if __name__ == "__main__":
     axs[1].set_yscale("log")
     plt.savefig(f"{args.out_prefix}.mutations.png")
     plt.clf()
-    
-    import time
-    st = time.time()
-    focal_x = 20.0#args.spatial_extent / 2
-    focal_y = 20.0#args.spatial_extent / 2
-    focal = np.argmin(
-        np.sqrt(
-            (sample_locations[:, 0] - focal_x) ** 2 +
-            (sample_locations[:, 1] - focal_y) ** 2 
-        )
-    )
-    dist_to_focal = \
-        np.sqrt(
-            (sample_locations[:, 0] - sample_locations[focal, 0]) ** 2 +
-            (sample_locations[:, 1] - sample_locations[focal, 1]) ** 2 
-        )
-    subset = np.flatnonzero(dist_to_focal < 10)
-    dist_to_focal = dist_to_focal[subset]
-    order = np.argsort(dist_to_focal)
-    subset = subset[order]
-    dist_to_focal = dist_to_focal[order]
-    subset_nodes = [full_ts.individual(i).nodes for i in subset]
-    #tmp_ts = full_ts.keep_intervals([[5e6, 6e6]]).simplify().trim()
-    tmp_ts = full_ts
-    print(subset.size)
-    print(tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).num_mutations, tmp_ts.num_mutations)
-    print(tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).diversity(), tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).segregating_sites())
-    site_rel_to_focal = tmp_ts.genetic_relatedness(
-        sample_sets=subset_nodes, #[[i] for i in subset],
-        indexes=[(0, j) for j in range(subset.size)],
-        mode='site'
-    )
-    branch_rel_to_focal = tmp_ts.genetic_relatedness(
-        sample_sets=subset_nodes, #[[i] for i in subset],
-        indexes=[(0, j) for j in range(subset.size)],
-        mode='branch'
-    )
-    fig, axs = plt.subplots(1, 2, figsize=(8, 3), constrained_layout=True)
-    axs[0].plot(branch_rel_to_focal, site_rel_to_focal, "o", color="black", markersize=4)
-    axs[0].set_xlabel("branch relatedness")
-    axs[0].set_ylabel("site relatedness")
-    axs[1].plot(dist_to_focal, site_rel_to_focal, "o", color="black", markersize=4, label="site")
-    axs[1].plot(dist_to_focal, branch_rel_to_focal, "o", color="red", markersize=4, label="branch")
-    axs[1].set_xlabel("spatial distance")
-    axs[1].set_ylabel("relatedness")
-    axs[1].legend()
-    plt.savefig(f"{args.out_prefix}.relatedness.png")
-    plt.clf()
-    print(f"{time.time() - st} seconds")
-

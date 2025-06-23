@@ -1,0 +1,7 @@
+tsinfer==0.4.3
+tskit==0.6.2
+tsdate
+tszip
+numpy
+matplotlib
+ray

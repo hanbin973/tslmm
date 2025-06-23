@@ -17,9 +17,10 @@ r"""
 - Simulate ARG under spatial model with local density regulation using SLiM
 - Write out pedigree information from tracked ancestral individuals into msprime.PedigreeBuilder
 - Simulate conditional on pedigree with msprime
+- Recapitate with a more-or-less arbitrary population size
 - Simulate neutral mutations on top of genealogies
 - Assign effect size to mutations with tstrait
-- Make some sanity checks (e.g. fine-scale spatial clustering of close relatives, phenotypes)
+- Do some sanity checks (e.g. fine-scale spatial clustering of close relatives, phenotypes)
 """
 
 slim_model = r"""
@@ -35,7 +36,7 @@ initialize() {
         "SD", 0.3,         // sigma_D, dispersal distance 
         "SX", 0.3,         // sigma_X, interaction distance for measuring local density
         "SM", 0.3,         // sigma_M, mate choice distance
-        "K", 20,           // carrying capacity per unit area 20 10 5 5 5
+        "K", 20,           // carrying capacity per unit area
         "LIFETIME", 4,     // average life span
         "WIDTH", 25.0,     // width of the simulated area
         "HEIGHT", 25.0,    // height of the simulated area
@@ -72,6 +73,7 @@ initialize() {
 }
 
 1 first() {
+    // uniformly distributed
     sim.addSubpop("p0", asInteger(K * WIDTH * HEIGHT));
     p0.setSpatialBounds(c(0, 0, WIDTH, HEIGHT));
     p0.individuals.setSpatialPosition(p0.pointUniform(p0.individualCount));
@@ -177,12 +179,12 @@ if __name__ == "__main__":
         help="Recombination rate",
     )
     parser.add_argument(
-        "--mutation-rate", type=float, default=1.0e-9,
+        "--mutation-rate", type=float, default=1e-8,
         help="Mutation rate",
     )
     parser.add_argument(
-        "--num-causal-mutations", type=int, default=10000,
-        help="Number of causal mutations",
+        "--prop-causal-mutations", type=int, default=0.01,
+        help="Proportion of mutations that are causual",
     )
     parser.add_argument(
         "--heritability", type=float, default=1.0,
@@ -191,6 +193,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ticks", type=int, default=200,
         help="Number of ticks to run pedigree simulation",
+    )
+    parser.add_argument(
+        "--burn-in", type=int, default=50,
+        help="Number of ticks to discard from start of pedigree simulation",
     )
     parser.add_argument(
         "--out-prefix", type=str, default="spatial-simulation",
@@ -230,15 +236,19 @@ if __name__ == "__main__":
         logfile.write(result.stdout.decode("utf-8"))
         if result.returncode:
             raise ValueError(result.stderr)
-        tszip.compress(tskit.load(slim_pedigree_path), slim_pedigree_path)
-    
+        slim_ts = tskit.load(slim_pedigree_path)
+        tszip.compress(slim_ts, slim_pedigree_path)
+    else:
+        slim_ts = tszip.decompress(slim_pedigree_path)
 
+    # NB: all individuals are recorded in this tree sequence, whether or not
+    # these contribute ancestry to the contemporary individuals, and all of
+    # these are marked as samples
+
+
+    # extract pedigree from SLiM sim
     pedigree_tables_path = args.out_prefix + ".pedigree.tables"
     if not os.path.exists(pedigree_tables_path) or args.overwrite:
-        # all individuals are recorded in this tree sequence, whether or not these contribute
-        # ancestry to the contemporary individuals, and all of these are marked as samples
-        #slim_ts = tskit.load(slim_pedigree_path)
-        slim_ts = tszip.decompress(slim_pedigree_path)
 
         # we'll only record pedigree of newborns
         sample_codes = [
@@ -253,7 +263,9 @@ if __name__ == "__main__":
         locations = {}
         sex = {}
         for ind in slim_ts.individuals():
-            ch, p1, p2 = ind.metadata["pedigree_id"], ind.metadata["pedigree_p1"], ind.metadata["pedigree_p2"]
+            p1 = ind.metadata["pedigree_p1"]
+            p2 = ind.metadata["pedigree_p2"]
+            ch = ind.metadata["pedigree_id"]
             ages[ch] = slim_ts.nodes_time[ind.nodes[0]]
             sex[ch] = ind.metadata["sex"]
             locations[ch] = ind.location
@@ -272,24 +284,30 @@ if __name__ == "__main__":
 
         # stick 'em in the pedigree builder
         time_order = sorted(ancestors, key=lambda n: ages[n])
+        cutoff = args.ticks - args.burn_in
         id_map = {ind:i for i, ind in enumerate(time_order)}
-        pedigree = msprime.PedigreeBuilder(individuals_metadata_schema=tskit.MetadataSchema.permissive_json())
+        schema = tskit.MetadataSchema.permissive_json()
+        pedigree = msprime.PedigreeBuilder(individuals_metadata_schema=schema)
         for ind in time_order:
-            founder = ages[ind] == args.ticks
-            if founder: assert np.all(np.equal(parents[ind], tskit.NULL))
-            uid = pedigree.add_individual(
-                time=ages[ind], 
-                parents=None if founder else [id_map[p] for p in parents[ind]], 
-                is_sample=(ages[ind] == 0),
-                metadata={
-                    "location_x": locations[ind][0], 
-                    "location_y": locations[ind][1], 
-                    "sex": sex[ind],
-                    "pedigree_id": ind,
-                },
-            )
-            assert uid == id_map[ind]
+            if ages[ind] <= cutoff:
+                founder = np.any([ages[p] > cutoff for p in parents[ind]])
+                uid = pedigree.add_individual(
+                    time=ages[ind], 
+                    parents=None if founder else [id_map[p] for p in parents[ind]], 
+                    is_sample=(ages[ind] == 0),
+                    metadata={
+                        "location_x": locations[ind][0], 
+                        "location_y": locations[ind][1], 
+                        "sex": sex[ind],
+                        "pedigree_id": ind,
+                    },
+                )
+                assert uid == id_map[ind]
         pedigree_tables = pedigree.finalise(sequence_length=1)
+        logfile.write(
+            f"Kept {pedigree_tables.individuals.num_rows} individuals "
+            f"in pedigree after discarding burn-in and non-ancestors\n"
+        )
         tszip.compress(pedigree_tables.tree_sequence(), pedigree_tables_path)
     else:
         pedigree_tables = tszip.decompress(pedigree_tables_path).dump_tables()
@@ -298,6 +316,7 @@ if __name__ == "__main__":
     # msprime simulation conditional on pedigree
     genealogies_path = args.out_prefix + ".genealogies.trees"
     if not os.path.exists(genealogies_path) or args.overwrite or args.overwrite_from_msp:
+        # TODO: use a better pop size estimate, or adjust for burn-in
         pedigree_tables.sequence_length = args.sequence_length
         pedigree_ts = msprime.sim_ancestry(
             initial_state=pedigree_tables.tree_sequence(),
@@ -306,12 +325,13 @@ if __name__ == "__main__":
             random_seed=args.seed + 1000,
         )
 
-        # recapitate (complete the genealogies) using "empirical" coalescence
-        # rate to get population size, over the latter half of the simulation
-        # (which hopefully is old enough to avoid spatial structure)
-        population_size = 1 / 2 / pedigree_ts.pair_coalescence_rates(
-            time_windows=np.array([0, args.ticks / 2, args.ticks, np.inf]),
-        )[1]
+        # recapitate (complete the genealogies) using census population size,
+        # e.g. this is a historically panmixic population that suddenly
+        # experiences spatial structure
+        population_size = np.bincount(
+            slim_ts.nodes_time.astype(int), 
+            minlength=args.ticks + 1,
+        )[args.ticks - args.burn_in]
         logfile.write(f"Recapitating with population size {population_size}\n")
         logfile.write(
             f"Nodes, edges before recapitating: "
@@ -343,24 +363,26 @@ if __name__ == "__main__":
     else:
         full_ts = tszip.decompress(genealogies_path)
 
-    
+
     # trait simulation with tstrait
-    # FIXME: no clue what's realistic here
     phenotype_path = args.out_prefix + ".phenotypes.pkl"
     if not os.path.exists(phenotype_path) or args.overwrite or args.overwrite_from_msp:
+        num_causal = int(args.prop_causal_mutations * full_ts.num_mutations)
         phenotypes = tstrait.sim_phenotype(
             full_ts, 
             model=tstrait.trait_model(distribution="normal", mean=0, var=1),
-            num_causal=min(args.num_causal_mutations, full_ts.num_mutations),
-            #causal_sites=np.arange(full_ts.num_sites),
+            num_causal=num_causal,
             h2=args.heritability,
             random_seed=args.seed + 4000,
         )
+        logfile.write(f"Simulated {num_causal} effect sizes\n")
         pickle.dump(phenotypes, open(phenotype_path, "wb"))
     else:
         phenotypes = pickle.load(open(phenotype_path, "rb"))
+
     # NB: presumably the phenotypes aren't correct for internal individuals in
     # the pedigree, as only a partial sequence is recorded for these
+
 
     # sanity check: we should have both spatial genetic structure
     # and spatial autocorrelation in phenotype, at least at short distances
@@ -445,12 +467,30 @@ if __name__ == "__main__":
                 pickle.load(open(stats_path, "rb"))
 
 
+    # population size during spatial simulation
+    population_size = np.bincount(
+        slim_ts.nodes_time.astype(int), 
+        minlength=args.ticks + 1,
+    )
+    fig, axs = plt.subplots(1, figsize=(4, 3), constrained_layout=True)
+    axs.plot(np.arange(args.ticks + 1), population_size, "-o", color="black")
+    axs.axvline(x=args.ticks - args.burn_in, linestyle="dashed", color="red")
+    axs.text(
+        args.ticks - args.burn_in, population_size.max(), 
+        "burn-in", ha="left", va="center", color="red",
+    )
+    axs.set_xlabel("Time ago")
+    axs.set_ylabel("Census population size")
+    plt.savefig(f"{args.out_prefix}.popsize.png")
+    plt.clf()
+
+
+    # plot spatial genetic and phenotypic patterns
     fig = plt.figure(figsize=(10, 4.5), constrained_layout=True)
     gsp = fig.add_gridspec(2, 2)
     ax1 = fig.add_subplot(gsp[0, 0])
     ax2 = fig.add_subplot(gsp[1, 0])
     ax3 = fig.add_subplot(gsp[:, 1])
-
     spat = spatial_distances.flatten()
     phen = phenotype_distances.flatten()
     gene = genetic_relatedness.flatten()
@@ -470,4 +510,79 @@ if __name__ == "__main__":
     plt.colorbar(img, ax=ax3, label="phenotype")
     ax3.set_xlabel("x-coord")
     ax3.set_ylabel("y-coord")
-    plt.savefig(f"{args.out_prefix}.png")
+    plt.savefig(f"{args.out_prefix}.spatial.png")
+    plt.clf()
+
+
+    # plot mutation ages, frequency
+    mutations_freq = np.full(full_ts.num_mutations, 0)
+    for t in full_ts.trees():
+        for m in t.mutations():
+            mutations_freq[m.id] = t.num_samples(m.node)
+    mutations_count = np.bincount(mutations_freq, minlength=full_ts.num_samples)
+    mutations_age = np.bincount(
+        mutations_freq, 
+        weights=full_ts.mutations_time, 
+        minlength=full_ts.num_samples,
+    ) / mutations_count
+    fig, axs = plt.subplots(1, 2, figsize=(8, 3), constrained_layout=True)
+    axs[0].plot(np.arange(full_ts.num_samples), mutations_count, "o", color="black", markersize=4)
+    axs[0].set_xlabel("sample frequency")
+    axs[0].set_ylabel("# of mutations")
+    axs[0].set_yscale("log")
+    axs[1].plot(np.arange(full_ts.num_samples), mutations_age, "o", color="black", markersize=4)
+    axs[1].set_xlabel("sample frequency")
+    axs[1].set_ylabel("avg mutation age")
+    axs[1].set_yscale("log")
+    plt.savefig(f"{args.out_prefix}.mutations.png")
+    plt.clf()
+    
+    import time
+    st = time.time()
+    focal_x = 20.0#args.spatial_extent / 2
+    focal_y = 20.0#args.spatial_extent / 2
+    focal = np.argmin(
+        np.sqrt(
+            (sample_locations[:, 0] - focal_x) ** 2 +
+            (sample_locations[:, 1] - focal_y) ** 2 
+        )
+    )
+    dist_to_focal = \
+        np.sqrt(
+            (sample_locations[:, 0] - sample_locations[focal, 0]) ** 2 +
+            (sample_locations[:, 1] - sample_locations[focal, 1]) ** 2 
+        )
+    subset = np.flatnonzero(dist_to_focal < 10)
+    dist_to_focal = dist_to_focal[subset]
+    order = np.argsort(dist_to_focal)
+    subset = subset[order]
+    dist_to_focal = dist_to_focal[order]
+    subset_nodes = [full_ts.individual(i).nodes for i in subset]
+    #tmp_ts = full_ts.keep_intervals([[5e6, 6e6]]).simplify().trim()
+    tmp_ts = full_ts
+    print(subset.size)
+    print(tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).num_mutations, tmp_ts.num_mutations)
+    print(tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).diversity(), tmp_ts.simplify(samples=np.array(subset_nodes).flatten()).segregating_sites())
+    site_rel_to_focal = tmp_ts.genetic_relatedness(
+        sample_sets=subset_nodes, #[[i] for i in subset],
+        indexes=[(0, j) for j in range(subset.size)],
+        mode='site'
+    )
+    branch_rel_to_focal = tmp_ts.genetic_relatedness(
+        sample_sets=subset_nodes, #[[i] for i in subset],
+        indexes=[(0, j) for j in range(subset.size)],
+        mode='branch'
+    )
+    fig, axs = plt.subplots(1, 2, figsize=(8, 3), constrained_layout=True)
+    axs[0].plot(branch_rel_to_focal, site_rel_to_focal, "o", color="black", markersize=4)
+    axs[0].set_xlabel("branch relatedness")
+    axs[0].set_ylabel("site relatedness")
+    axs[1].plot(dist_to_focal, site_rel_to_focal, "o", color="black", markersize=4, label="site")
+    axs[1].plot(dist_to_focal, branch_rel_to_focal, "o", color="red", markersize=4, label="branch")
+    axs[1].set_xlabel("spatial distance")
+    axs[1].set_ylabel("relatedness")
+    axs[1].legend()
+    plt.savefig(f"{args.out_prefix}.relatedness.png")
+    plt.clf()
+    print(f"{time.time() - st} seconds")
+

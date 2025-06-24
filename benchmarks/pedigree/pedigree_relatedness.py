@@ -16,8 +16,10 @@ def pedigree_matrix(ts, samples, founder_time):
     and so
        (P - I) x = -I_F
     where I_F is the identity-for-the-founders matrix
+
+    If the tree sequence is properly sorted, 
+    PmI is upper-triangular.
     """
-    founder_time = 3.0
     founders, = np.where(ts.individuals_time == founder_time)
     individuals_parent = ts.tables.individuals.parents
     nzp, = np.where(
@@ -34,15 +36,35 @@ def pedigree_matrix(ts, samples, founder_time):
              (founders, np.arange(len(founders)))),
             (ts.num_individuals, len(founders))
     ).tocsc()
-    x = scipy.sparse.linalg.spsolve(PmI, IF)
+
+    # iterate over columns
+    data_segs = []
+    indices_segs = []
+    indptr_diff = [0]
+    for j in range(IF.shape[1]):
+        b = IF[:, j].toarray().ravel()
+        x = scipy.sparse.linalg.spsolve_triangular(PmI, b, lower=False)
+        i_nnz = np.flatnonzero(x)
+        x_nnz = x[i_nnz]
+        nnz = x_nnz.size
+        data_segs.append(x_nnz)
+        indices_segs.append(i_nnz)
+        indptr_diff.append(nnz)
+    data = np.concatenate(data_segs)
+    indices = np.concatenate(indices_segs)
+    indptr = np.cumsum(indptr_diff)
+    x = scipy.sparse.csc_matrix(
+        (data, indices, indptr),
+        shape=IF.shape
+    )
     xx = x[samples, :]
-    assert np.allclose(np.sum(xx, axis=1), 1.0)
     R = xx.dot(xx.transpose())
     return R
 
-ts = tskit.load("test.trees")
-
-samples, = np.where(ts.individuals_time == 0.0)
-samples = samples[:3]
-
-pedigree_matrix(ts, samples, founder_time=3.0)
+if __name__ == "__main__":
+    ts = tskit.load("test.trees")
+    
+    samples, = np.where(ts.individuals_time == 0.0)
+    samples = samples[:3]
+    
+    pedigree_matrix(ts, samples, founder_time=3.0)

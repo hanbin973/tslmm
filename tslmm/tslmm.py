@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse
+import logging
 import numba
 from typing import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,8 @@ _i1r = numba.types.Array(numba.types.int32, 1, 'C', readonly=True)
 _f1r = numba.types.Array(numba.types.float64, 1, 'C', readonly=True)
 _f2r = numba.types.Array(numba.types.float64, 2, 'C', readonly=True)
 _f2w = numba.types.Array(numba.types.float64, 2, 'C', readonly=False)
+
+logger = logging.getLogger(__name__)
 
 # --- for testing --- #
 
@@ -199,8 +202,8 @@ def genetic_relatedness_vector(
     x = arr - arr.mean(axis=0) if centre else arr # centering within index in rows
     x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
     x = sample_individual_sparray(ts).dot(x)
-    #x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False)
-    x = _genetic_relatedness_vector(ts, W=x, num_threads=num_threads)
+    x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False)
+    #x = _genetic_relatedness_vector(ts, W=x, num_threads=num_threads)
     x = sample_individual_sparray(ts).T.dot(x)
     x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
     x = x - x.mean(axis=0) if centre else x # centering within index in cols
@@ -312,7 +315,7 @@ class CovarianceModel:
             r -= alpha[np.newaxis] * q
             last_rho = rho
         success = itt + 1 < maxitt
-        if not success: print("CG did not converge") # DEBUG
+        if not success: logging.info("CG did not converge") # DEBUG
         if is_vector: x = x.squeeze()
         return (x, (itt, success)) if return_info else x
      
@@ -630,7 +633,7 @@ class TSLMM:
             numerator = (1 - decay) * numerator + decay * update ** 2
             state = state + update
             running_mean = (1 - decay) * running_mean + decay * state
-            if verbose: print(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}, {np.linalg.norm(gradient)}")
+            if verbose: logging.info(f"Iteration {itt}: {np.power(scale * running_mean, 2).round(2)}, {np.linalg.norm(gradient)}")
             if callback is not None: callback(np.power(scale * running_mean, 2))
             # TODO: stopping condition based on change in running mean
             # TODO: fit a quadratic using gradient from last K iterations to get better estimate
@@ -703,7 +706,7 @@ class TSLMM:
             rel_change = np.abs((state - running_mean) / running_mean)
             if np.all(rel_change < stop_rtol): stop_counter += 1
             running_mean = state.copy()
-            if verbose: print(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}, {np.linalg.norm(gradient)}")
+            if verbose: logging.info(f"Iteration {itt}: {(running_mean * np.power(scale, 2)).round(2)}, {np.linalg.norm(gradient)}")
             if callback is not None: callback(running_mean * np.power(scale, 2))
             if stop_counter > max_stop_counter: break 
             # TODO: stopping condition based on change in running mean
@@ -857,7 +860,7 @@ class TSLMM:
         :param float sgd_epsilon: Epsilon parameter of AdaDelta.
         :param bool verbose: Print intermediate parameters.
         """
-
+        logging.info("VC estimation start")
         if haseman_elston:
             variance_components_init = self._haseman_elston_regression(
                 phenotypes=self.phenotypes,
@@ -867,6 +870,7 @@ class TSLMM:
                 trace_samples=haseman_elston_samples,
                 rng=self.rng,
             )
+            if verbose: logging.info(f"HE regression: {variance_components_init.round(2)}")
 
         self._optimization_trajectory = []
         callback_fn = lambda x: self._optimization_trajectory.append(x)
@@ -909,7 +913,7 @@ class TSLMM:
                     self._optimization_trajectory[-max_stop_counter:]
                     ).mean(axis=0)
             self._optimization_trajectory.append(avg_variance_components)
-            if verbose: print(f"Final variance component values: {avg_variance_components.round(4)}")
+            if verbose: logging.info(f"Final variance component values: {avg_variance_components.round(4)}")
             self.variance_components, self.fixed_effects, self.residuals, self.inverse_average_information = \
                 self._reml_stochastic_optimize_ai(
                     starting_values=avg_variance_components,

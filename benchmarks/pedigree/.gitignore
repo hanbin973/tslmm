@@ -1,0 +1,7 @@
+spatial-simulation.*.trees
+spatial-simulation.*.tables
+spatial-simulation.*.pkl
+*stderr
+chunks/
+depr/
+no-rec/

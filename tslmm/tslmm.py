@@ -162,6 +162,7 @@ def genetic_relatedness_vector(
         cols: np.ndarray,
         centre: bool = False,
         num_threads: int = None,
+        windows: list = None,
         ) -> np.ndarray:
     """
     Wrapper around `tskit.TreeSequence.genetic_relatedness_vector` to support centering in respect to individuals.
@@ -202,7 +203,8 @@ def genetic_relatedness_vector(
     x = arr - arr.mean(axis=0) if centre else arr # centering within index in rows
     x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
     x = sample_individual_sparray(ts).dot(x)
-    x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False)
+    x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False, windows=windows)
+    if windows is not None: x = x[0]
     #x = _genetic_relatedness_vector(ts, W=x, num_threads=num_threads)
     x = sample_individual_sparray(ts).T.dot(x)
     x = individual_idx_sparray(ts.num_individuals, rows).T.dot(x)
@@ -233,7 +235,7 @@ class CovarianceModel:
     def __call__(
         self, sigma: float, tau: float, y: np.ndarray, 
         rows: np.ndarray = None, cols: np.ndarray = None,
-        centre: bool = False,
+        centre: bool = False, windows: list = None
     ) -> np.ndarray:
         r"""
         Multiplies the covariance matrix to an array.
@@ -930,7 +932,7 @@ class TSLMM:
                     callback=callback_fn,
                 )
 
-    def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None):
+    def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None, windows: list = None):
         """
         Return the posterior mean genetic values (BLUPs) for _all_ individuals
         in the tree sequence, and (if `variance_samples` is nonzero) a Monte
@@ -952,7 +954,7 @@ class TSLMM:
 
         # TODO do the solve as part of the optimization routine
         self.weighted_residuals = self.covariance.solve(sigma, tau, self.residuals, preconditioner=M, indices=i)
-        E_g = self.covariance(0, tau, self.weighted_residuals, rows=j, cols=i)
+        E_g = self.covariance(0, tau, self.weighted_residuals, rows=j, cols=i, windows=windows)
         if variance_samples > 0: V_g = xdiag(_posterior_var, j.size, variance_samples, rng) 
 
         return (E_g, V_g) if variance_samples > 0 else E_g

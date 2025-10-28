@@ -203,7 +203,7 @@ def genetic_relatedness_vector(
     x = arr - arr.mean(axis=0) if centre else arr # centering within index in rows
     x = individual_idx_sparray(ts.num_individuals, cols).dot(x)
     x = sample_individual_sparray(ts).dot(x)
-    x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False, windows=windows)
+    x = ts.genetic_relatedness_vector(W=x, mode="branch", centre=False, windows=windows, span_normalise=False)
     if windows is not None: x = x[0]
     #x = _genetic_relatedness_vector(ts, W=x, num_threads=num_threads)
     x = sample_individual_sparray(ts).T.dot(x)

@@ -873,6 +873,9 @@ class TSLMM:
                 rng=self.rng,
             )
             if verbose: logging.info(f"HE regression: {variance_components_init.round(2)}")
+        
+        if method == "he":
+            self.variance_components = variance_components_init
 
         self._optimization_trajectory = []
         callback_fn = lambda x: self._optimization_trajectory.append(x)

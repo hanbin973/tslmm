@@ -99,7 +99,7 @@ class TraitVectorParallel:
         edge_insertion_order,
         edge_removal_order,
         sequence_length,
-        num_traits
+        num_traits,
     ):
         # virtual root is at num_nodes; virtual samples are beyond that
         N = num_nodes + 1 + len(samples)
@@ -326,8 +326,6 @@ class TraitVector:
             out[out_i] = self.stack[i]
         return out
 
-
-
 def sim_genetic_value(ts, **kwargs):
     def bincount_fn(w):
         return np.bincount(samples_individuals, w)
@@ -390,4 +388,3 @@ def sim_genetic_value_parallel(ts, num_traits, **kwargs):
             )
     
     return g_individuals
-

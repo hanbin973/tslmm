@@ -121,7 +121,7 @@ model = TSLMM(
     covariates=covariates,
     centre=True 
 )
-model.fit_variance_components(verbose=False)
+model.fit_variance_components(method="ai", haseman_elston=True, verbose=False)
 model.prepare_blup() # Pre-calculate residuals
 
 print(f"Estimated sigma^2: {model.variance_components[0]:.4f}")

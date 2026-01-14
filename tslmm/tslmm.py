@@ -935,6 +935,23 @@ class TSLMM:
                     callback=callback_fn,
                 )
 
+    def prepare_blup(self):
+        """
+        Compute and store the weighted residuals for BLUP prediction.
+        Ideally called before `predict` or `predict_ancestral_avg` to cache the linear system solution.
+        """
+        if hasattr(self, "weighted_residuals"):
+            return
+
+        sigma, tau = self.variance_components
+        i = self.phenotyped_individuals
+        M = lambda x: self.preconditioner(sigma, tau, x)
+        
+        # solves (Sigma^-1) @ residuals
+        self.weighted_residuals = self.covariance.solve(
+            sigma, tau, self.residuals, preconditioner=M, indices=i
+        )
+
     def predict(self, individuals: np.ndarray = None, variance_samples: int = 0, rng: np.random.Generator = None, windows: list = None):
         """
         Return the posterior mean genetic values (BLUPs) for _all_ individuals
@@ -955,8 +972,9 @@ class TSLMM:
             sketch = self.covariance(0, tau, test_vectors, rows=j, cols=j) - sketch
             return sketch
 
-        # TODO do the solve as part of the optimization routine
-        self.weighted_residuals = self.covariance.solve(sigma, tau, self.residuals, preconditioner=M, indices=i)
+        # Ensure weighted residuals are computed
+        self.prepare_blup()
+
         E_g = self.covariance(0, tau, self.weighted_residuals, rows=j, cols=i, windows=windows)
         if variance_samples > 0: V_g = xdiag(_posterior_var, j.size, variance_samples, rng) 
 

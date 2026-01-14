@@ -2,6 +2,7 @@ import numpy as np
 import tskit
 from numba import i4, f8
 from numba.experimental import jitclass
+from tslmm.tslmm import TSLMM
 
 # --- Generalized Trait ---
 
@@ -639,3 +640,75 @@ def sim_normalized_covariance(ts, cut_time, mode_covariance=1, **kwargs):
             )
     
     return g_individuals
+
+def predict_ancestral_avg(model: TSLMM, cut_time: float) -> float:
+    """
+    Predict the ancestral average genetic value at a given `cut_time`.
+    
+    This function computes the normalized covariance between active lineages at `cut_time`
+    and the observed individuals, then projects the weighted residuals onto this covariance
+    to estimate the ancestral mean.
+
+    :param model: The fitted TSLMM model instance.
+    :param cut_time: The time (generations ago) at which to predict the ancestral mean.
+    :return: The predicted mean genetic value (scalar).
+    """
+    # Ensure weighted residuals are computed
+    if hasattr(model, "prepare_blup"):
+        model.prepare_blup()
+    
+    if not hasattr(model, "weighted_residuals"):
+         raise RuntimeError("Model does not have weighted_residuals. Run prepare_blup() or predict() first.")
+
+    # Compute normalized covariance for ALL individuals
+    # mode_covariance=1 is required for deterministic scaling based on active lineages
+    cov_vector = sim_normalized_covariance(model.covariance.ts, cut_time=cut_time, mode_covariance=1)
+    
+    # Subset to match the individuals used in fitting (observed phenotypes)
+    # model.weighted_residuals corresponds to model.phenotyped_individuals
+    cov_subset = cov_vector[model.phenotyped_individuals]
+    
+    # Get parameters
+    sigma, tau = model.variance_components
+    mu = model.covariance.mutation_rate
+    
+    # Compute prediction
+    # Prediction = Intercept + tau * mu * (Cov @ residuals)
+    # Note: cov_subset has already been normalized by total_lineages implicitly in sim_normalized_covariance
+    dot_prod = np.dot(cov_subset, model.weighted_residuals)
+    
+    # Check fixed effects (Intercept)
+    intercept = 0.0
+    if hasattr(model, "fixed_effects") and model.fixed_effects is not None and model.fixed_effects.size > 0:
+         # Assuming first fixed effect is intercept
+         intercept = model.fixed_effects[0]
+
+    prediction = intercept + 2 * tau * mu * dot_prod
+    
+    return float(prediction)
+
+def get_genome_average_lineages(ts, cut_time) -> float:
+    """
+    Calculate the genome-wide average number of active lineages at `cut_time`.
+    
+    This computes the weighted average of active lineages across all trees,
+    where weights are the genomic span of each tree.
+    
+    :param ts: Tree Sequence.
+    :param cut_time: The time threshold.
+    :return: Average number of lineages (scalar).
+    """
+    # Get lineages per tree
+    counts = count_active_lineages(ts, cut_time)
+    
+    # Get spans
+    bps = ts.breakpoints(as_array=True)
+    spans = np.diff(bps)
+    
+    # Check alignment (count_active_lineages returns array of size num_trees)
+    if len(counts) != len(spans):
+        # Should not happen if count_active_lineages is correct
+        raise RuntimeError(f"Mismatch: {len(counts)} counts vs {len(spans)} trees")
+        
+    avg = np.sum(counts * spans) / ts.sequence_length
+    return float(avg)

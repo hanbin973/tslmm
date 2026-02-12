@@ -1,33 +1,67 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools",
+    "setuptools_scm",
+    "wheel",
+    "numpy>=2.0"
+]
+
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tslmm"
-version = "0.0.1"
-authors = [  # TODO
-    { name="Hanbin Lee", email="hblee@umich.edu" },
-    { name="Nate Pope", email="natep@uoregon.edu" },
-    { name="Peter Ralph", email="pr@uoregon.edu" },
-    { name="Gregor Gorjanc", email="something@somewhere.org" },
-	{ name="Jerome Kelleher", email="something@somewhere.org" },
+dynamic = ["version"]
+authors = [
+    {name = "Tskit Developers", email = "admin@tskit.dev"},
 ]
-description = "Linear mixed models from ancestral recombination graphs"
+description = "Linear mixed models for tree sequences."
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-  "numpy",
-  "scipy",
-  "numba",
-  "tskit",
-]
+license = {text = "MIT"}
 classifiers = [
-  "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Development Status :: 3 - Alpha",
+    "Environment :: Other Environment",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
+keywords = [
+    "statistical genetics",
+    "genomic prediction",
+    "tree sequence",
+    "ancestral recombination graph",
+    "tskit",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "scipy>=1.10.0",
+    "numpy>=1.23.5",
+    "tskit>=0.6.0",
+]
+
+[project.urls]
+# Homepage = "https://tskit.dev/tslmm"
+# Documentation = "https://tskit.dev/tslmm/docs/stable"
+# Changelog = "https://tskit.dev/tslmm/docs/stable/changelogs.html"
+"Bug Tracker" = "https://github.com/tskit-dev/tslmm/issues"
+GitHub = "https://github.com/tskit-dev/tslmm/"
 
 [tool.setuptools]
 packages = ["tslmm"]
-py-modules = ["__init__"]
 
+[tool.setuptools.dynamic]
+version = {attr = "tslmm._version.tslmm_version"}
+
+[tool.pytest.ini_options]
+addopts = "-n 4"
+testpaths = ["tests"]
